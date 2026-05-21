@@ -33,6 +33,7 @@ export class PassthroughTokenProvider implements TokenProvider {
   readonly mode = 'passthrough';
   async getDownstreamToken(
     incomingToken: string | null,
+    _target: DownstreamTarget,
   ): Promise<string | null> {
     return incomingToken;
   }
