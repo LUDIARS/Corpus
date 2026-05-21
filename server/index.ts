@@ -57,6 +57,9 @@ const PUBLIC_DIR = resolve(
 
 const CERNERE_BASE_URL = requireEnv('CERNERE_BASE_URL');
 const AUDIENCE = requireEnv('CORPUS_PUBLIC_URL');
+// external-id マッピングの issuer。 単一 Cernere 運用では CERNERE_BASE_URL を使う。
+const CERNERE_ISSUER =
+  process.env.CORPUS_CERNERE_ISSUER?.trim() || CERNERE_BASE_URL;
 const ADMIN_IDS = new Set(
   (process.env.CORPUS_ADMIN_IDS ?? '')
     .split(',')
@@ -78,6 +81,8 @@ async function main(): Promise<void> {
   startAuth({
     cernereBaseUrl: CERNERE_BASE_URL,
     adminIds: ADMIN_IDS,
+    db,
+    issuer: CERNERE_ISSUER,
   });
 
   // hub 機構: 組み込みコネクタ + プラグインパック

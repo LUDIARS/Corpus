@@ -11,6 +11,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 export type CorpusDb = Database.Database;
 
@@ -28,6 +29,19 @@ CREATE TABLE IF NOT EXISTS connector_health (
   detail       TEXT,
   checked_at   INTEGER NOT NULL
 );
+
+-- external-id マッピング層 (Corpus 設計 案B)。
+-- (Cernere issuer, sub) → 再割当可能な external-id (UUID)。 複数の (issuer,sub)
+-- が 1 つの external-id を指せる (多対一 = 同一人物の複数 Cernere アカウント)。
+-- 共有データ型はこの external-id を owner 識別子に使う (NULL=自分)。
+CREATE TABLE IF NOT EXISTS external_id_map (
+  issuer      TEXT NOT NULL,
+  sub         TEXT NOT NULL,
+  external_id TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
+  PRIMARY KEY (issuer, sub)
+);
+CREATE INDEX IF NOT EXISTS external_id_map_eid ON external_id_map(external_id);
 `;
 
 export function openDb(dbPath: string): CorpusDb {
@@ -59,4 +73,73 @@ export function getDisplayName(db: CorpusDb, userId: string): string | null {
     .prepare(`SELECT name FROM user_display_cache WHERE user_id = ?`)
     .get(userId) as { name: string } | undefined;
   return row?.name ?? null;
+}
+
+// ── external-id マッピング層 (案B) ──────────────────────────────────────────
+
+export interface ExternalIdMapping {
+  issuer: string;
+  sub: string;
+  externalId: string;
+  createdAt: number;
+}
+
+/**
+ * (issuer, sub) → external-id を get-or-create する。
+ * 未登録なら新しい UUID を発行して登録する。
+ */
+export function resolveExternalId(
+  db: CorpusDb,
+  issuer: string,
+  sub: string,
+): string {
+  const row = db
+    .prepare(`SELECT external_id FROM external_id_map WHERE issuer = ? AND sub = ?`)
+    .get(issuer, sub) as { external_id: string } | undefined;
+  if (row) return row.external_id;
+  const externalId = randomUUID();
+  db.prepare(
+    `INSERT INTO external_id_map (issuer, sub, external_id, created_at)
+     VALUES (?, ?, ?, ?)`,
+  ).run(issuer, sub, externalId, Date.now());
+  return externalId;
+}
+
+/** 全マッピングを列挙する (admin 用)。 */
+export function listExternalIdMappings(db: CorpusDb): ExternalIdMapping[] {
+  const rows = db
+    .prepare(
+      `SELECT issuer, sub, external_id, created_at FROM external_id_map
+       ORDER BY external_id, issuer, sub`,
+    )
+    .all() as Array<{
+    issuer: string;
+    sub: string;
+    external_id: string;
+    created_at: number;
+  }>;
+  return rows.map((r) => ({
+    issuer: r.issuer,
+    sub: r.sub,
+    externalId: r.external_id,
+    createdAt: r.created_at,
+  }));
+}
+
+/**
+ * (issuer, sub) の指す external-id を張り替える (admin によるマージ)。
+ * 対象が存在しなければ false。
+ */
+export function reassignExternalId(
+  db: CorpusDb,
+  issuer: string,
+  sub: string,
+  targetExternalId: string,
+): boolean {
+  const res = db
+    .prepare(
+      `UPDATE external_id_map SET external_id = ? WHERE issuer = ? AND sub = ?`,
+    )
+    .run(targetExternalId, issuer, sub);
+  return res.changes > 0;
 }

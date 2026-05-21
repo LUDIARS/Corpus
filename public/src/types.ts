@@ -19,6 +19,8 @@ export interface ModuleInfo {
 
 export interface Identity {
   userId: string;
+  /** Corpus が解決した owner 識別子 (external-id)。 */
+  externalId: string;
   role: string;
   displayName: string | null;
   isAdmin: boolean;

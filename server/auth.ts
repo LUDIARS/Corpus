@@ -16,6 +16,7 @@
 
 import type { Context, MiddlewareHandler } from 'hono';
 import { createHash } from 'node:crypto';
+import { resolveExternalId, type CorpusDb } from './db.ts';
 
 /** 検証結果キャッシュの TTL。 user accessToken の寿命 (60min) より十分短く取る。 */
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -23,6 +24,8 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 export interface AuthIdentity {
   /** Cernere userId (sub)。 */
   userId: string;
+  /** Corpus が解決した owner 識別子 (external-id、 案B)。 共有データの owner に使う。 */
+  externalId: string;
   role: string;
   displayName: string | null;
   /** 旧 project-token 方式の名残。 現方式では常に null (互換のため残置)。 */
@@ -33,6 +36,10 @@ export interface AuthIdentity {
 interface AuthOptions {
   cernereBaseUrl: string;
   adminIds: ReadonlySet<string>;
+  /** external-id 解決に使う SQLite ハンドル。 */
+  db: CorpusDb;
+  /** この Corpus が接続する Cernere の issuer 識別子。 */
+  issuer: string;
 }
 
 interface CacheEntry {
@@ -80,6 +87,7 @@ async function verifyToken(token: string): Promise<AuthIdentity | null> {
     if (!u.id) return null;
     const identity: AuthIdentity = {
       userId: u.id,
+      externalId: resolveExternalId(optsRef.db, optsRef.issuer, u.id),
       role: typeof u.role === 'string' ? u.role : 'general',
       displayName: typeof u.name === 'string' ? u.name : null,
       projectKey: null,
