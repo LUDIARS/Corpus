@@ -30,6 +30,11 @@ Corpus 本体は変更しない。 別リポ (VantanHub 等) で:
 2. 各モジュールを `<dir>/<moduleId>/index.ts` に置き `CorpusModule` を default export
 3. Corpus を `CORPUS_PLUGIN_DIR=<dir>` で起動
 
+**プラグインのランタイム import は必ず `server/hub/sdk.ts` 経由にする。**
+直接 `hono` を import するとプラグイン側 node_modules の別コピーを掴み、
+hono が二重ロードされて `app.route()` が壊れる。 sdk.ts は Corpus 側の
+単一コピーを再エクスポートする。
+
 ## やらないこと
 
 - ドメイン固有モジュール (= プラグインパック側)
