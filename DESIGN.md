@@ -351,8 +351,15 @@ descriptor は `Panel → Section[] → Component[]` の階層。
     "title": "{facility_name}",
     "subtitle": "{start_at|datetime}–{end_at|time}",
     "body": "{purpose}", "meta": "{owner_display_name}",
-    "actions": [ /* ActionDescriptor */ ] } }
+    "actions": [ /* ActionDescriptor — 単発 API 呼び出し */ ],
+    "edit": {                          // 任意 — item をインライン編集
+      "dataId": "<data id>", "method": "PATCH", "params": { "id": "{id}" },
+      "success": "更新しました",
+      "fields": [ /* FormField — item の値で pre-fill される */ ] } } }
 ```
+`item.actions` は単発 API (キャンセル等)。 `item.edit` を付けると item に
+「編集」 アフォーダンスが出て、 item の値で pre-fill したフォームに切り替わり
+PATCH する (一覧上のインライン編集)。
 
 **2. `form`** — field 群 + submit
 ```jsonc
@@ -360,12 +367,19 @@ descriptor は `Panel → Section[] → Component[]` の階層。
   "submit": { "dataId": "<data id>", "method": "POST", "success": "予約しました" },
   "fields": [
     { "name": "facilityId", "label": "施設", "input": "select",
-      "optionsSource": "<data id>", "optionLabel": "name", "optionValue": "id",
-      "required": true },
+      "optionsSource": "<data id>", "optionsPath": "items",
+      "optionLabel": "name", "optionValue": "id", "required": true,
+      "optionDetail": [ { "label": "場所", "value": "{location}" },
+                        { "label": "定員", "value": "{capacity}" } ] },
     { "name": "startAt", "label": "開始", "input": "datetime", "required": true },
     { "name": "purpose", "label": "目的", "input": "text", "maxLength": 200 } ] }
 ```
 `input` 種: `text` / `textarea` / `number` / `select` / `datetime` / `date` / `checkbox`
+- `select` は `optionsSource` (data id) から選択肢を引く。 `optionsPath` で
+  レスポンス内の配列パス (例 `items`)、 `optionLabel`/`optionValue` で
+  表示/値フィールドを指定
+- `optionDetail` を付けると、 選択中オプションのレコードから指定フィールドを
+  フォーム内に表示する (例: 施設を選ぶと場所/定員を表示)
 
 **3. `detail`** — 1 レコードの key-value
 ```jsonc
@@ -429,6 +443,21 @@ descriptor は `Panel → Section[] → Component[]` の階層。
   "requires": "admin" }                // 任意
 ```
 
+**トグル action** — on/off ステートを持つ操作 (例: admin の重複可フラグ)。
+単発でなく双状態:
+
+```jsonc
+{ "label": "重複可",
+  "kind": "toggle",                    // 既定は単発。 'toggle' で双状態スイッチ
+  "state": "{allowOverlap}",           // 現在値の束縛 (boolean)
+  "dataId": "<data id>", "method": "POST", "params": { "id": "{id}" },
+  "body": { "allowOverlap": "{toggled}" },  // {toggled} = 反転後の値
+  "requires": "admin" }
+```
+
+レンダラは `state` からスイッチを描き、 反転時に `{toggled}` を反転後の値で
+埋めて送信する。
+
 ### 13.7 レンダラの切り出し
 
 宣言レンダラ + descriptor スキーマを **自己完結パッケージ**
@@ -447,6 +476,16 @@ descriptor は `Panel → Section[] → Component[]` の階層。
 | 4 | Bibliotheca (スキャナは `custom`) / Actio を declarative panel 化。 自前 SPA を撤去 |
 
 宣言で書けるものは宣言、 書けないものだけ `custom`/`script` — が原則。
+
+### 13.9 Aedilis pilot 由来のスキーマ反映 (2026-05-21)
+
+§13.8 step 3 の Aedilis pilot (`Aedilis/server/corpus.ts`) で descriptor を
+実物に当て、 表現力ギャップ 4 点を §13.4 / §13.6 に反映した:
+
+- `form` select の `optionsPath` — 選択肢レスポンス内の配列パス (§13.4-2)
+- `form` select の `optionDetail` — 選択中オプションの詳細表示 (§13.4-2)
+- `list` item の `edit` — 一覧上のインライン編集フォーム (§13.4-1)
+- ActionDescriptor の `kind: "toggle"` — on/off ステート操作 (§13.6)
 
 ## 14. オープン論点
 
