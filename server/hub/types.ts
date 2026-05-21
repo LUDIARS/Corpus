@@ -59,6 +59,15 @@ export interface Logger {
 /**
  * CorpusModule の setup() に渡る登録 API。
  */
+/** モジュールが宣言する hub データエンドポイント (registerData の引数)。 */
+export interface ModuleDataDecl {
+  id: string;
+  /** /api/x/<moduleId> 相対パス (例 '/board')。 */
+  path: string;
+  title?: string;
+  scope?: ConnectorScope;
+}
+
 export interface CorpusContext {
   /** Corpus 本体と共有の SQLite。 モジュールは自分のテーブルを CREATE IF NOT EXISTS で足してよい。 */
   readonly db: CorpusDb;
@@ -70,6 +79,12 @@ export interface CorpusContext {
   registerRoute(sub: Hono): void;
   /** hub frontend のタブを登録する。 */
   registerPanel(panel: PanelDescriptor): void;
+  /**
+   * hub データエンドポイントを宣言する。 Corpus 自身のマニフェスト
+   * (/.well-known/corpus-service.json) の data[] に載り、 この Corpus を
+   * 参照する上位 hub から集約できるようになる (D6)。
+   */
+  registerData(decl: ModuleDataDecl): void;
   /** env を読む。 */
   env(key: string): string | undefined;
   readonly logger: Logger;

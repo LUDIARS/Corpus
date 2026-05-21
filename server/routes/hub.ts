@@ -78,9 +78,11 @@ export function makeHubRouter(
     return c.json({ services });
   });
 
-  // データ集約 — マニフェスト宣言済みエンドポイントをコネクタ越しに取得する。
-  // 参照先トークンは TokenProvider (D5) が解決する。
-  r.get('/data/:service/:dataId', async (c) => {
+  // データ集約 — マニフェスト宣言済みエンドポイントをコネクタ越しに中継する。
+  // 参照先トークンは TokenProvider (D5) が解決する。 GET だけでなく POST /
+  // PATCH / DELETE も透過 (write-through) し、 メソッド / ボディ / クエリを
+  // そのまま転送する。
+  r.all('/data/:service/:dataId', async (c) => {
     const { service, dataId } = c.req.param();
     const conn = registry.getConnector(service);
     if (!conn) return c.json({ error: 'service_not_found' }, 404);
@@ -95,12 +97,20 @@ export function makeHubRouter(
       service: conn.id,
       projectKey: manifest.cernereProjectKey ?? conn.id,
     });
+    const method = c.req.method;
     const headers: Record<string, string> = {};
     if (token) headers['authorization'] = `Bearer ${token}`;
+    const init: RequestInit = { method, headers };
+    if (method !== 'GET' && method !== 'HEAD') {
+      init.body = await c.req.text();
+      headers['content-type'] =
+        c.req.header('content-type') ?? 'application/json';
+    }
+    const search = new URL(c.req.url).search;
 
     let res: Response;
     try {
-      res = await conn.fetch(endpoint.path, { headers });
+      res = await conn.fetch(endpoint.path + search, init);
     } catch (e) {
       return c.json({ error: 'connector_error', detail: String(e) }, 502);
     }
