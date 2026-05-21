@@ -213,10 +213,12 @@ async function renderServicePanel(
       ),
   };
   try {
-    // entry はファイル名 (manifest が /corpus-ui/<entry> で配信する想定)
-    const file = panel.entry.split('/').pop() ?? panel.entry;
+    // entry が絶対パスならそのまま、 そうでなければ旧式 (/corpus-ui/<entry>) とみなす
+    const entryPath = panel.entry.startsWith('/')
+      ? panel.entry
+      : `/corpus-ui/${panel.entry}`;
     const mod = (await import(
-      /* @vite-ignore */ `/hub-ui/${svc.id}/${file}`
+      /* @vite-ignore */ `/hub-ui/${svc.id}${entryPath}`
     )) as ServicePanelModule;
     if (typeof mod.mount !== 'function') {
       throw new Error('サービスパネルが mount() を export していません');
