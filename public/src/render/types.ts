@@ -47,10 +47,10 @@ export interface ListItemSpec {
   body?: string;
   meta?: string;
   actions?: ActionDescriptor[];
-  /** item をインライン編集フォームに切り替えて PATCH する。 */
+  /** item をインライン編集フォームに切り替えて更新する。 */
   edit?: {
     dataId: string;
-    method: 'PATCH';
+    method: 'PUT' | 'PATCH';
     params?: Record<string, string>;
     success?: string;
     fields: FormField[];

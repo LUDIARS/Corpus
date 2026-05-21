@@ -324,7 +324,7 @@ function renderEditForm(
     for (const { field, ctrl } of controls) body[field.name] = ctrl.value();
     try {
       const res = await ctx.data(edit.dataId, {
-        method: 'PATCH',
+        method: edit.method,
         params: fillParams(edit.params, item),
         body,
       });
