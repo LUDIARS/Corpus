@@ -15,6 +15,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { CorpusDb } from '../db.ts';
+import type { ManifestConnector } from '../connectors/manifest-connector.ts';
 import type {
   ConnectorInfo,
   CorpusContext,
@@ -41,7 +42,10 @@ function makeLogger(tag: string): Logger {
 }
 
 export class HubRegistry {
+  // プラグイン / 組み込みが手動登録するコネクタ (id キー)
   private readonly connectors = new Map<string, ServiceConnector>();
+  // discovery が見つけたマニフェスト駆動コネクタ (baseUrl キー)
+  private readonly discovered = new Map<string, ManifestConnector>();
   private readonly loaded: LoadedModule[] = [];
 
   constructor(private readonly db: CorpusDb) {}
@@ -54,12 +58,25 @@ export class HubRegistry {
     this.connectors.set(connector.id, connector);
   }
 
+  /** discovery が見つけたコネクタを登録/更新する (baseUrl 単位)。 */
+  upsertDiscovered(connector: ManifestConnector): void {
+    this.discovered.set(connector.baseUrl, connector);
+  }
+
+  getDiscoveredByBaseUrl(baseUrl: string): ManifestConnector | undefined {
+    return this.discovered.get(baseUrl.replace(/\/+$/, ''));
+  }
+
+  /** 手動登録 + discovery のコネクタを全部返す。 */
   listConnectors(): ServiceConnector[] {
-    return [...this.connectors.values()];
+    return [...this.connectors.values(), ...this.discovered.values()];
   }
 
   getConnector(id: string): ServiceConnector | undefined {
-    return this.connectors.get(id);
+    return (
+      this.connectors.get(id) ??
+      [...this.discovered.values()].find((c) => c.id === id)
+    );
   }
 
   listModules(): ModuleInfo[] {

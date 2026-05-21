@@ -20,6 +20,12 @@
 - 起動口は `server/bootstrap.ts`: Infisical machine identity →
   `ensureEnv()` で secret fetch & inject → `index.ts`
 - hub 機構は `server/hub/`: コネクタ抽象 + レジストリ + プラグインローダ
+- v0.2 データハブ機構 (横断仕様 `../VantanHub-DESIGN.md` §7-9):
+  - `hub/manifest.ts` — サービスマニフェスト `/.well-known/corpus-service.json` (D6)
+  - `hub/discovery.ts` — local 既知ポート probe / server 設定参照 (D1)
+  - `hub/tokens.ts` — 参照先トークン伝播の抽象 (passthrough / cernere-project-token、D5)
+  - `connectors/manifest-connector.ts` — マニフェスト駆動コネクタ
+  - `/api/hub/services` (一覧) / `/api/hub/data/:service/:dataId` (集約取得)
 - frontend (`public/`) は shell のみ。 ドメイン UI はプラグインの `panel.js`
 
 ## プラグインパックを足すとき
