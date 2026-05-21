@@ -16,7 +16,7 @@ import { pathToFileURL } from 'node:url';
 
 import type { CorpusDb } from '../db.ts';
 import type { ManifestConnector } from '../connectors/manifest-connector.ts';
-import type { ManifestDataEndpoint } from './manifest.ts';
+import type { ManifestDataEndpoint, ManifestPanel } from './manifest.ts';
 import type {
   ConnectorInfo,
   CorpusContext,
@@ -205,12 +205,24 @@ export class HubRegistry {
 
   /**
    * この Corpus 自身のサービスマニフェスト用の data[] / panels[]。
-   * data はプラグインが registerData で宣言した分。 panels は現状空
-   * (プラグインパネルの上位公開はパネルパス規約の統一が前提 — 別課題)。
+   * data はプラグインが registerData で宣言した分。 panels はプラグインの
+   * 登録パネルで、 entry は参照先絶対パス /plugins/<id>/<file>。
    */
-  ownManifest(): { data: ManifestDataEndpoint[] } {
+  ownManifest(): { data: ManifestDataEndpoint[]; panels: ManifestPanel[] } {
+    const panels: ManifestPanel[] = [];
+    for (const lm of this.loaded) {
+      if (lm.panel) {
+        panels.push({
+          id: lm.module.id,
+          title: lm.panel.title,
+          icon: lm.panel.icon,
+          entry: `/plugins/${lm.module.id}/${lm.panel.entry ?? 'panel.js'}`,
+        });
+      }
+    }
     return {
       data: this.loaded.flatMap((lm) => lm.manifestData),
+      panels,
     };
   }
 }

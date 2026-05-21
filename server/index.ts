@@ -126,21 +126,22 @@ async function main(): Promise<void> {
   );
 
   // 自身のサービスマニフェスト (D6) — 別の Corpus から参照される時に使う。
-  // data[] はプラグインが registerData で宣言した分。 panels[] の上位公開は
-  // パネルパス規約の統一待ちで当面空。
-  app.get('/.well-known/corpus-service.json', (c) =>
-    c.json({
+  // data[] はプラグインが registerData で宣言した分、 panels[] はプラグインの
+  // パネル (entry は /plugins/<id>/<file> の絶対パス)。
+  app.get('/.well-known/corpus-service.json', (c) => {
+    const own = registry.ownManifest();
+    return c.json({
       service: process.env.CORPUS_SERVICE_ID ?? 'corpus',
       displayName: process.env.CORPUS_DISPLAY_NAME ?? 'Corpus',
-      version: '0.5.0',
+      version: '1.0.0',
       corpusApi: 1,
       health: '/api/health',
-      data: registry.ownManifest().data,
-      panels: [],
+      data: own.data,
+      panels: own.panels,
       auth: 'cernere-project-token',
       cernereProjectKey: process.env.CORPUS_SERVICE_ID ?? 'corpus',
-    }),
-  );
+    });
+  });
 
   // /api/* は health を除き Cernere 認証必須
   app.use('/api/*', requireAuth);
@@ -166,22 +167,30 @@ async function main(): Promise<void> {
 
   // 参照サービスが公開する Corpus 用 UI コンポーネント (D4) をプロキシ配信。
   // /api/* の外なので未認証 — UI コードなので動的 import 可能にする。
-  app.get('/hub-ui/:service/:file', async (c) => {
-    const { service, file } = c.req.param();
-    if (!/^[a-zA-Z0-9._-]+$/.test(file) || file.includes('..')) {
+  // パス規約統一: マニフェスト panels[].entry は参照先での絶対パス
+  // (例 /corpus-ui/loans.js, /plugins/presence/panel.js)。 ここはその
+  // 全パスをそのまま参照先へ中継する。
+  app.get('/hub-ui/:service/*', async (c) => {
+    const service = c.req.param('service');
+    const prefix = `/hub-ui/${service}/`;
+    // /hub-ui/<service> より後ろ (先頭スラッシュ込み) を参照先パスとする
+    const rest = c.req.path.startsWith(prefix)
+      ? c.req.path.slice(prefix.length - 1)
+      : '';
+    if (!rest || rest.includes('..')) {
       return c.json({ error: 'bad_path' }, 400);
     }
     const conn = registry.getConnector(service);
     if (!conn) return c.json({ error: 'service_not_found' }, 404);
     let res: Response;
     try {
-      res = await conn.fetch(`/corpus-ui/${file}`);
+      res = await conn.fetch(rest);
     } catch {
       return c.json({ error: 'connector_error' }, 502);
     }
     if (!res.ok) return c.json({ error: 'ui_unavailable' }, 404);
     const body = Buffer.from(await res.arrayBuffer());
-    const type = CONTENT_TYPES[extname(file)] ?? 'application/octet-stream';
+    const type = CONTENT_TYPES[extname(rest)] ?? 'application/octet-stream';
     return c.body(body, 200, { 'content-type': type });
   });
 

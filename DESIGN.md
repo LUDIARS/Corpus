@@ -290,7 +290,165 @@ inject してから `index.ts` を読む。 `.env` 直書き / Excubitor inject 
 
 ---
 
-## 13. オープン論点
+## 13. 宣言的レンダリング (declarative panels)
+
+> 2026-05-21 ユーザ決定。 現行の panel.js (micro-frontend) 方式に加え、
+> サービスが UI を **JSON で宣言**し Corpus 内蔵レンダラが描く **宣言的
+> レンダリング**へ軸足を移す。 サービスはフロント JS を書かない。
+
+### 13.1 背景
+
+現行 (D4) の panel は §4 manifest の `ManifestPanel.entry` = サービス配信の
+`panel.js`。 panel.js は `mount(container, ctx)` を export する実 JS で、
+サービスが frontend を書く必要がある (micro-frontend)。
+
+宣言的レンダリングでは、 サービスは UI を **descriptor (JSON)** で宣言し、
+Corpus の内蔵レンダラが Foundation UI で実描画する。 定型 UI (一覧 / フォーム /
+詳細 等) はサービス JS ゼロになる。
+
+### 13.2 panel の種別 (corpusApi 2)
+
+`ManifestPanel` を `kind` 判別の discriminated union にする
+(`corpusApi` を 1 → 2 に上げる):
+
+| kind | 宣言 | 描画 | 位置づけ |
+|---|---|---|---|
+| `declarative` | `ui` (descriptor インライン) または `uiEndpoint` (descriptor を返す URL) | Corpus 内蔵レンダラ | **既定・本命** |
+| `script` | `entry` (panel.js URL) | サービス JS の `mount()` | エスケープハッチ (移行期の保険) |
+
+加えて descriptor 内に `custom` component (サービス配信 WC を mount) を持つ。
+`script` / `custom` は **カメラスキャン等、 宣言で原理的に書けない UI** に限る。
+declarative shift の例外であり、 通常サービスは declarative のみで完結する。
+
+サービスは `declarative` panel で `ui` インラインと `uiEndpoint` の
+どちらを使うかを **自分で固定**する (静的 UI はインライン、 動的生成は endpoint)。
+
+### 13.3 UI descriptor スキーマ
+
+descriptor は `Panel → Section[] → Component[]` の階層。
+
+```jsonc
+// PanelDescriptor — declarative panel の ui / uiEndpoint が返す本体
+{
+  "descriptorVersion": 1,
+  "title": "施設予約",
+  "sections": [
+    { "title": "新規予約", "components": [ /* ComponentDescriptor */ ] }
+  ]
+}
+```
+
+### 13.4 ComponentDescriptor — 8 種
+
+`type` で判別。 共通フィールド: `requires?: "admin"` (admin のみ表示・実行)。
+
+**1. `list`** — dataSource の配列を card で並べる
+```jsonc
+{ "type": "list",
+  "dataSource": "<manifest data id>", "itemsPath": "items", "itemKey": "id",
+  "empty": "予約はありません",
+  "item": {
+    "title": "{facility_name}",
+    "subtitle": "{start_at|datetime}–{end_at|time}",
+    "body": "{purpose}", "meta": "{owner_display_name}",
+    "actions": [ /* ActionDescriptor */ ] } }
+```
+
+**2. `form`** — field 群 + submit
+```jsonc
+{ "type": "form",
+  "submit": { "dataId": "<data id>", "method": "POST", "success": "予約しました" },
+  "fields": [
+    { "name": "facilityId", "label": "施設", "input": "select",
+      "optionsSource": "<data id>", "optionLabel": "name", "optionValue": "id",
+      "required": true },
+    { "name": "startAt", "label": "開始", "input": "datetime", "required": true },
+    { "name": "purpose", "label": "目的", "input": "text", "maxLength": 200 } ] }
+```
+`input` 種: `text` / `textarea` / `number` / `select` / `datetime` / `date` / `checkbox`
+
+**3. `detail`** — 1 レコードの key-value
+```jsonc
+{ "type": "detail", "dataSource": "<data id>", "recordPath": "facility",
+  "fields": [ { "label": "場所", "value": "{location}" },
+              { "label": "定員", "value": "{capacity}" } ] }
+```
+
+**4. `table`** — 列定義 + 行データ
+```jsonc
+{ "type": "table", "dataSource": "<data id>", "itemsPath": "items",
+  "columns": [ { "header": "施設", "value": "{facility_name}" },
+               { "header": "時間", "value": "{start_at|datetime}" } ],
+  "rowActions": [ /* ActionDescriptor */ ] }
+```
+
+**5. レイアウト (`section` / `tabs`)** — 入れ子コンテナ
+```jsonc
+{ "type": "section", "title": "...", "components": [ /* ... */ ] }
+{ "type": "tabs", "tabs": [ { "label": "一覧", "components": [ /* ... */ ] } ] }
+```
+
+**6. `stat`** — 数値サマリ
+```jsonc
+{ "type": "stat", "label": "未完了", "dataSource": "<data id>", "value": "{count}" }
+```
+`value` 省略時は dataSource 配列の件数を表示。
+
+**7. `action-button`** — API を叩くボタン
+```jsonc
+{ "type": "action-button", "label": "...", "action": { /* ActionDescriptor */ } }
+```
+
+**8. `custom`** — エスケープハッチ。 サービス配信の Web Component を mount
+```jsonc
+{ "type": "custom", "tag": "bibliotheca-scanner", "url": "/corpus-ui/scanner.js" }
+```
+
+### 13.5 データ束縛
+
+- component の `dataSource` / `optionsSource` / form の `submit.dataId` /
+  action の `dataId` は **manifest `data[]` の `id`** を指す (任意 URL 不可)。
+  Corpus は §4 の `data(dataId, init)` 経由でしか叩かない = サービス契約が
+  manifest に閉じ、 Corpus は許可された endpoint しか触れない
+- テンプレート: `{field}` を束縛レコードの値で置換。 `{field|filter}` で整形
+  (`datetime` / `date` / `time` / `number` / `truncate:N`)
+- 束縛元: `list` の item / `detail` の record / `form` の入力値
+- パラメタ付きパス: manifest data の `path` に `:param` を許し、
+  action の `params` (レコードからテンプレート) で埋める
+
+### 13.6 ActionDescriptor
+
+```jsonc
+{ "label": "キャンセル",
+  "dataId": "<manifest data id>",
+  "method": "DELETE",                  // GET / POST / PATCH / DELETE
+  "params": { "id": "{id}" },          // data path の :param をレコード値で埋める
+  "body": { /* POST/PATCH 用、 テンプレート可 */ },
+  "confirm": "キャンセルしますか?",      // 任意 — 確認ダイアログ
+  "success": "キャンセルしました",        // 任意
+  "requires": "admin" }                // 任意
+```
+
+### 13.7 レンダラの切り出し
+
+宣言レンダラ + descriptor スキーマを **自己完結パッケージ**
+(`@ludiars/corpus-renderer` 相当) に実装する。 入力は
+「descriptor + `data(dataId, init)` 関数 + identity」 のみで、 Corpus / Memoria
+本体に依存しない。 これにより Corpus 本体から、 さらには独立サービスとしても
+切り出せる粒度を保つ (ユーザ要件「単独サービスとして切り出せるように」)。
+
+### 13.8 移行
+
+| 段階 | 内容 |
+|---|---|
+| 1 | descriptor の JSON Schema 確定 + `corpus-renderer` パッケージ (8 component) |
+| 2 | `ManifestPanel` を kind 判別 union に。 Corpus frontend が `declarative` panel を内蔵レンダラへ回す。 `script` は現行経路を維持 |
+| 3 | **Aedilis を pilot** — declarative panel を 1 枚出す (新しく小さい)。 descriptor 表現力を実地検証 |
+| 4 | Bibliotheca (スキャナは `custom`) / Actio を declarative panel 化。 自前 SPA を撤去 |
+
+宣言で書けるものは宣言、 書けないものだけ `custom`/`script` — が原則。
+
+## 14. オープン論点
 
 1. external-id の発行/再割り当てを Cernere 側 (sub 再設計) と Corpus 側
    (マッピング層) のどちらに置くか。
