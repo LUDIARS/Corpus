@@ -183,7 +183,8 @@ async function renderModulePanel(
   }
 }
 
-// panel に渡す fetch — api.ts の apiFetch を import すると循環するので薄く再実装
+// panel に渡す fetch — apiFetch は 401 で AuthError を throw するが、
+// パネルは res.status を自前で扱う (例: 503=未接続) ため throw しない薄い版。
 async function apiFetchForPanel(
   path: string,
   init: RequestInit = {},
