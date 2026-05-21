@@ -76,3 +76,24 @@ export interface PanelContext {
 export interface PanelModule {
   mount(container: HTMLElement, ctx: PanelContext): void | Promise<void>;
 }
+
+/**
+ * 参照サービス (Bb / Ae 等) が提供する Corpus 用 UI コンポーネントの
+ * mount() に渡るコンテキスト (D4)。 サービスは Corpus を submodule で持たない
+ * ため、 この型は各サービス側で同形のものを宣言してよい。
+ */
+export interface ServicePanelContext {
+  /** このパネルを提供するサービス id。 */
+  service: string;
+  /** 自分の identity。 */
+  identity: Identity;
+  /** サービスマニフェスト宣言済みの data エンドポイントを id で取得 (GET)。 */
+  data(dataId: string, init?: RequestInit): Promise<Response>;
+}
+
+export interface ServicePanelModule {
+  mount(
+    container: HTMLElement,
+    ctx: ServicePanelContext,
+  ): void | Promise<void>;
+}

@@ -15,6 +15,9 @@ import type {
   PanelContext,
   PanelModule,
   ServiceInfo,
+  ServicePanelContext,
+  ServicePanelInfo,
+  ServicePanelModule,
 } from './types.ts';
 
 const app = document.getElementById('app') as HTMLElement;
@@ -191,7 +194,46 @@ async function apiFetchForPanel(
   return fetch(path, { ...init, headers });
 }
 
-function renderShell(identity: Identity, modules: ModuleInfo[]): void {
+/** 参照サービス (Bb / Ae 等) の Corpus 用 UI コンポーネントを表示する (D4)。 */
+async function renderServicePanel(
+  container: HTMLElement,
+  svc: ServiceInfo,
+  panel: ServicePanelInfo,
+  identity: Identity,
+): Promise<void> {
+  container.innerHTML = '';
+  const ctx: ServicePanelContext = {
+    service: svc.id,
+    identity,
+    data: (dataId, init) =>
+      apiFetchForPanel(
+        `/api/hub/data/${svc.id}/${encodeURIComponent(dataId)}`,
+        init,
+      ),
+  };
+  try {
+    // entry はファイル名 (manifest が /corpus-ui/<entry> で配信する想定)
+    const file = panel.entry.split('/').pop() ?? panel.entry;
+    const mod = (await import(
+      /* @vite-ignore */ `/hub-ui/${svc.id}/${file}`
+    )) as ServicePanelModule;
+    if (typeof mod.mount !== 'function') {
+      throw new Error('サービスパネルが mount() を export していません');
+    }
+    await mod.mount(container, ctx);
+  } catch (e) {
+    container.innerHTML = '';
+    container.appendChild(
+      el('p', 'error', `サービスパネルの読み込みに失敗しました: ${String(e)}`),
+    );
+  }
+}
+
+function renderShell(
+  identity: Identity,
+  modules: ModuleInfo[],
+  services: ServiceInfo[],
+): void {
   app.innerHTML = '';
 
   const header = el('header', 'topbar');
@@ -221,6 +263,14 @@ function renderShell(identity: Identity, modules: ModuleInfo[]): void {
       label: `${m.icon ?? '▫'} ${m.title}`,
       render: () => void renderModulePanel(main, m, identity),
     })),
+    // 参照サービスが提供する Corpus 用 UI パネル (D4)
+    ...services.flatMap((svc) =>
+      (svc.manifest?.panels ?? []).map((panel) => ({
+        id: `svc:${svc.id}:${panel.id}`,
+        label: `${panel.icon ?? '🧩'} ${panel.title}`,
+        render: () => void renderServicePanel(main, svc, panel, identity),
+      })),
+    ),
   ];
 
   const buttons = new Map<string, HTMLButtonElement>();
@@ -247,7 +297,10 @@ async function boot(): Promise<void> {
     const { modules } = await apiJson<{ modules: ModuleInfo[] }>(
       '/api/hub/modules',
     );
-    renderShell(identity, modules);
+    const { services } = await apiJson<{ services: ServiceInfo[] }>(
+      '/api/hub/services',
+    );
+    renderShell(identity, modules, services);
   } catch (e) {
     if (e instanceof AuthError) {
       clearToken();
