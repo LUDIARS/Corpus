@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url';
 
 import type { CorpusDb } from '../db.ts';
 import type { ManifestConnector } from '../connectors/manifest-connector.ts';
+import type { ManifestDataEndpoint } from './manifest.ts';
 import type {
   ConnectorInfo,
   CorpusContext,
@@ -31,6 +32,8 @@ interface LoadedModule {
   dir: string | null; // 組み込みモジュールは null
   panel: PanelDescriptor | null;
   routes: Hono[];
+  /** registerData で宣言された hub データエンドポイント (path は絶対化済)。 */
+  manifestData: ManifestDataEndpoint[];
 }
 
 function makeLogger(tag: string): Logger {
@@ -161,7 +164,13 @@ export class HubRegistry {
     module: CorpusModule,
     dir: string | null,
   ): Promise<void> {
-    const entry: LoadedModule = { module, dir, panel: null, routes: [] };
+    const entry: LoadedModule = {
+      module,
+      dir,
+      panel: null,
+      routes: [],
+      manifestData: [],
+    };
     const ctx: CorpusContext = {
       db: this.db,
       moduleId: module.id,
@@ -170,11 +179,32 @@ export class HubRegistry {
       registerPanel: (p) => {
         entry.panel = { ...p, moduleId: module.id, entry: p.entry ?? 'panel.js' };
       },
+      registerData: (d) => {
+        // path をモジュールの mount 先 (/api/x/<moduleId>) 基準で絶対化する
+        const rel = d.path.startsWith('/') ? d.path : `/${d.path}`;
+        entry.manifestData.push({
+          id: d.id,
+          path: `/api/x/${module.id}${rel}`,
+          title: d.title ?? d.id,
+          scope: d.scope ?? 'multi',
+        });
+      },
       env: (key) => process.env[key],
       logger: makeLogger(`mod:${module.id}`),
     };
     await module.setup(ctx);
     this.loaded.push(entry);
+  }
+
+  /**
+   * この Corpus 自身のサービスマニフェスト用の data[] / panels[]。
+   * data はプラグインが registerData で宣言した分。 panels は現状空
+   * (プラグインパネルの上位公開はパネルパス規約の統一が前提 — 別課題)。
+   */
+  ownManifest(): { data: ManifestDataEndpoint[] } {
+    return {
+      data: this.loaded.flatMap((lm) => lm.manifestData),
+    };
   }
 }
 

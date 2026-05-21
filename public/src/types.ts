@@ -87,7 +87,10 @@ export interface ServicePanelContext {
   service: string;
   /** 自分の identity。 */
   identity: Identity;
-  /** サービスマニフェスト宣言済みの data エンドポイントを id で取得 (GET)。 */
+  /**
+   * サービスマニフェスト宣言済みの data エンドポイントを id で叩く。
+   * 既定 GET。 init で method/body を渡せば POST 等の write-through も可。
+   */
   data(dataId: string, init?: RequestInit): Promise<Response>;
 }
 

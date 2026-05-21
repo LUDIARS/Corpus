@@ -115,15 +115,16 @@ async function main(): Promise<void> {
   );
 
   // 自身のサービスマニフェスト (D6) — 別の Corpus から参照される時に使う。
-  // data / panels を上位へ公開するのは将来課題、 v0.2 は識別情報のみ。
+  // data[] はプラグインが registerData で宣言した分。 panels[] の上位公開は
+  // パネルパス規約の統一待ちで当面空。
   app.get('/.well-known/corpus-service.json', (c) =>
     c.json({
       service: process.env.CORPUS_SERVICE_ID ?? 'corpus',
       displayName: process.env.CORPUS_DISPLAY_NAME ?? 'Corpus',
-      version: '0.2.0',
+      version: '0.5.0',
       corpusApi: 1,
       health: '/api/health',
-      data: [],
+      data: registry.ownManifest().data,
       panels: [],
       auth: 'cernere-project-token',
       cernereProjectKey: process.env.CORPUS_SERVICE_ID ?? 'corpus',
