@@ -15,6 +15,11 @@ export type { Context, MiddlewareHandler } from 'hono';
 export { HttpServiceConnector, SelfConnector } from '../connectors/builtin.ts';
 export type { HttpConnectorOptions } from '../connectors/builtin.ts';
 
+// 認証 — プラグインのルートは /api/x/<id> に mount され requireAuth 配下なので、
+// ハンドラ内で getIdentity(c) を使ってよい。
+export { getIdentity, requireAuth, requireAdmin } from '../auth.ts';
+export type { AuthIdentity } from '../auth.ts';
+
 export type { CorpusDb } from '../db.ts';
 export { cacheDisplayName, getDisplayName } from '../db.ts';
 
