@@ -210,7 +210,10 @@ async function main(): Promise<void> {
     console.log(`[corpus] listening on http://localhost:${info.port}`);
     console.log(`[corpus] data dir: ${DATA_DIR}`);
     console.log(`[corpus] cernere: ${CERNERE_BASE_URL}`);
-    console.log(`[corpus] mode: ${discoveryCfg.mode} / token: ${tokenProvider.mode}`);
+    console.log(
+      `[corpus] mode: ${discoveryCfg.mode} / token: ${tokenProvider.mode}` +
+        (discoveryCfg.remoteUrl ? ` / remote: ${discoveryCfg.remoteUrl}` : ''),
+    );
     console.log(`[corpus] modules: ${registry.listModules().map((m) => m.id).join(', ') || '(none)'}`);
     console.log(`[corpus] connectors: ${registry.listConnectors().map((c) => c.id).join(', ') || '(none)'}`);
   });

@@ -18,6 +18,12 @@ export interface DiscoveryConfig {
   localPorts: number[];
   /** server モードで参照する baseUrl 群。 */
   serverServices: string[];
+  /**
+   * ローカルアプリがマルチ情報を取りに行くサーバサイド Corpus の URL。
+   * local モードのとき、 ローカル直結に加えてこの remote を multi コネクタ
+   * として登録する (DESIGN §3 「ローカル直結 + マルチはサーバ経由」)。
+   */
+  remoteUrl: string | null;
 }
 
 /** env から discovery 設定を読む。 */
@@ -32,7 +38,9 @@ export function readDiscoveryConfig(): DiscoveryConfig {
     .split(',')
     .map((s) => s.trim().replace(/\/+$/, ''))
     .filter(Boolean);
-  return { mode, localPorts, serverServices };
+  const remoteUrl =
+    process.env.CORPUS_REMOTE_URL?.trim().replace(/\/+$/, '') || null;
+  return { mode, localPorts, serverServices, remoteUrl };
 }
 
 interface ProbeTarget {
@@ -42,10 +50,15 @@ interface ProbeTarget {
 
 function targetsFor(cfg: DiscoveryConfig): ProbeTarget[] {
   if (cfg.mode === 'local') {
-    return cfg.localPorts.map((p) => ({
+    const local: ProbeTarget[] = cfg.localPorts.map((p) => ({
       baseUrl: `http://localhost:${p}`,
       scope: 'local' as const,
     }));
+    // ローカル直結に加え、 設定があればサーバサイド Corpus を multi で参照
+    if (cfg.remoteUrl) {
+      local.push({ baseUrl: cfg.remoteUrl, scope: 'multi' as const });
+    }
+    return local;
   }
   return cfg.serverServices.map((u) => ({
     baseUrl: u,
