@@ -1,8 +1,12 @@
 // /api/hub/* — hub frontend が叩く集約 API。
 
 import { Hono } from 'hono';
-import type { CorpusDb } from '../db.ts';
-import { getUserToken } from '../auth.ts';
+import {
+  type CorpusDb,
+  listExternalIdMappings,
+  reassignExternalId,
+} from '../db.ts';
+import { getUserToken, requireAdmin } from '../auth.ts';
 import { buildOverview } from '../hub/aggregate.ts';
 import type { HubRegistry } from '../hub/registry.ts';
 import type { ConnectorInfo } from '../hub/types.ts';
@@ -121,6 +125,28 @@ export function makeHubRouter(
         'content-type': res.headers.get('content-type') ?? 'application/json',
       },
     });
+  });
+
+  // external-id マッピング (案B) — admin 専用。
+  r.get('/external-ids', requireAdmin, (c) =>
+    c.json({ mappings: listExternalIdMappings(db) }),
+  );
+
+  // (issuer, sub) の指す external-id を張り替える (マージ)。
+  r.post('/external-ids/reassign', requireAdmin, async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      issuer?: string;
+      sub?: string;
+      externalId?: string;
+    };
+    const { issuer, sub, externalId } = body;
+    if (!issuer || !sub || !externalId) {
+      return c.json({ error: 'issuer_sub_externalId_required' }, 422);
+    }
+    if (!reassignExternalId(db, issuer, sub, externalId)) {
+      return c.json({ error: 'mapping_not_found' }, 404);
+    }
+    return c.json({ ok: true });
   });
 
   return r;

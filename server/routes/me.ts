@@ -12,6 +12,7 @@ export function makeMeRouter(db: CorpusDb): Hono {
     if (id.displayName) cacheDisplayName(db, id.userId, id.displayName);
     return c.json({
       userId: id.userId,
+      externalId: id.externalId,
       role: id.role,
       displayName: id.displayName,
       isAdmin: id.isAdmin,
