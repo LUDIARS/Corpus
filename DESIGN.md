@@ -375,11 +375,12 @@ PATCH する (一覧上のインライン編集)。
     { "name": "purpose", "label": "目的", "input": "text", "maxLength": 200 } ] }
 ```
 `input` 種: `text` / `textarea` / `number` / `select` / `datetime` / `date` / `checkbox`
-- `select` は `optionsSource` (data id) から選択肢を引く。 `optionsPath` で
-  レスポンス内の配列パス (例 `items`)、 `optionLabel`/`optionValue` で
-  表示/値フィールドを指定
+- `select` は `options` (静的な固定 enum、 `{label,value}[]`) または
+  `optionsSource` (data id から動的取得) で選択肢を与える
+- `optionsSource` 利用時は `optionsPath` でレスポンス内の配列パス (例 `items`)、
+  `optionLabel`/`optionValue` で表示/値フィールドを指定
 - `optionDetail` を付けると、 選択中オプションのレコードから指定フィールドを
-  フォーム内に表示する (例: 施設を選ぶと場所/定員を表示)
+  フォーム内に表示する (optionsSource 利用時)
 
 **3. `detail`** — 1 レコードの key-value
 ```jsonc
@@ -484,6 +485,7 @@ PATCH する (一覧上のインライン編集)。
 
 - `form` select の `optionsPath` — 選択肢レスポンス内の配列パス (§13.4-2)
 - `form` select の `optionDetail` — 選択中オプションの詳細表示 (§13.4-2)
+- `form` select の `options` — 静的な固定 enum (Bibliotheca pilot で判明、 §13.4-2)
 - `list` item の `edit` — 一覧上のインライン編集フォーム (§13.4-1)
 - ActionDescriptor の `kind: "toggle"` — on/off ステート操作 (§13.6)
 
