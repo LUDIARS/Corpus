@@ -8,9 +8,9 @@
 //   5. router を mount → listen → health ループ start
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { cors } from 'hono/cors';
 import { serve } from '@hono/node-server';
-import { serveStatic } from '@hono/node-server/serve-static';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,6 +45,14 @@ const DATA_DIR = resolve(
 );
 const DB_PATH = join(DATA_DIR, 'corpus.db');
 
+// frontend (public/) の所在。 用途特化 hub は Corpus を submodule で取り込み
+// 別 cwd から起動するため、 cwd 相対ではなく明示パスで解決する。
+const PUBLIC_DIR = resolve(
+  process.env.CORPUS_PUBLIC_DIR && process.env.CORPUS_PUBLIC_DIR.trim()
+    ? process.env.CORPUS_PUBLIC_DIR
+    : join(__dirname, '..', 'public'),
+);
+
 const CERNERE_BASE_URL = requireEnv('CERNERE_BASE_URL');
 const AUDIENCE = requireEnv('CORPUS_PUBLIC_URL');
 const ADMIN_IDS = new Set(
@@ -55,6 +63,7 @@ const ADMIN_IDS = new Set(
 );
 
 const CONTENT_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -119,9 +128,21 @@ async function main(): Promise<void> {
     return c.body(body, 200, { 'content-type': type });
   });
 
-  // frontend shell (serveStatic は cwd 相対 — npm scripts は repo root から起動する前提)
-  app.use('/*', serveStatic({ root: './public' }));
-  app.get('/', serveStatic({ path: './public/index.html' }));
+  // frontend shell — PUBLIC_DIR から直接配信 (cwd 非依存)
+  const serveFromPublic = (c: Context, file: string): Response => {
+    if (file.includes('..') || !/^[a-zA-Z0-9._-]+$/.test(file)) {
+      return c.json({ error: 'bad_path' }, 400);
+    }
+    const full = join(PUBLIC_DIR, file);
+    if (!existsSync(full)) return c.json({ error: 'not_found' }, 404);
+    const type = CONTENT_TYPES[extname(file)] ?? 'application/octet-stream';
+    return c.body(readFileSync(full), 200, { 'content-type': type });
+  };
+  app.get('/', (c) => serveFromPublic(c, 'index.html'));
+  app.get('/index.html', (c) => serveFromPublic(c, 'index.html'));
+  app.get('/app.js', (c) => serveFromPublic(c, 'app.js'));
+  app.get('/app.js.map', (c) => serveFromPublic(c, 'app.js.map'));
+  app.get('/style.css', (c) => serveFromPublic(c, 'style.css'));
   app.notFound((c) => {
     const url = new URL(c.req.url);
     if (url.pathname.startsWith('/api/')) return c.json({ error: 'not_found' }, 404);
