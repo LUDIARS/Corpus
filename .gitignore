@@ -1,0 +1,11 @@
+node_modules/
+data/
+*.log
+.env
+.env.secrets
+.env.local
+public/app.js
+public/app.js.map
+desktop/out/
+desktop/dist/
+*.tsbuildinfo

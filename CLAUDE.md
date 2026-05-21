@@ -1,0 +1,42 @@
+# Corpus — Claude 向けメモ
+
+## 性格
+
+汎用 **hub フレームワーク**。 ドメイン (学校・社内 等) を **持たない**。
+ドメイン機能はプラグインパック側 (VantanHub 等) に置く。 Corpus 本体に
+学校固有のコードを足してはいけない。
+
+## 触ってよい / よくない
+
+- 触ってよい: `server/`, `public/`, `desktop/`, `tsconfig*`, `package.json`, README
+- 触らない: 他リポ。 Corpus は単独完結
+- DB schema 変更は migration を別途用意 (現状 `CREATE IF NOT EXISTS` のみ)。
+  新規カラム用 INDEX は ALTER ADD COLUMN の直後に冪等発行する
+
+## アーキ要点
+
+- Hono + better-sqlite3 + esbuild + tsx (Bibliotheca / Memoria pattern)
+- Cernere PASETO V4 検証は `server/auth.ts` (公開鍵 6h 毎 refresh)
+- 起動口は `server/bootstrap.ts`: Infisical machine identity →
+  `ensureEnv()` で secret fetch & inject → `index.ts`
+- hub 機構は `server/hub/`: コネクタ抽象 + レジストリ + プラグインローダ
+- frontend (`public/`) は shell のみ。 ドメイン UI はプラグインの `panel.js`
+
+## プラグインパックを足すとき
+
+Corpus 本体は変更しない。 別リポ (VantanHub 等) で:
+
+1. プラグインパックのルートディレクトリを用意
+2. 各モジュールを `<dir>/<moduleId>/index.ts` に置き `CorpusModule` を default export
+3. Corpus を `CORPUS_PLUGIN_DIR=<dir>` で起動
+
+## やらないこと
+
+- ドメイン固有モジュール (= プラグインパック側)
+- ユーザ登録 UI (Cernere 側)
+- 通知配信そのもの (プラグイン or Nuntius 側。 Corpus は土台のみ)
+
+## テスト方針
+
+- v0.1 は手動 (`npm run dev` → ブラウザ → 認証 → タブ表示)
+- 後で vitest で auth と hub registry の最小ケースを書く
