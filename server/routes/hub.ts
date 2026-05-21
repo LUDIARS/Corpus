@@ -110,11 +110,23 @@ export function makeHubRouter(
       headers['content-type'] =
         c.req.header('content-type') ?? 'application/json';
     }
-    const search = new URL(c.req.url).search;
+
+    // endpoint.path の :param を _cp_<param> クエリで埋め、 _cp_* は転送から除く
+    // (宣言的レンダラの action が paramater 付きパスを叩くため、 §13)
+    let resolvedPath = endpoint.path;
+    const forwardParams = new URLSearchParams();
+    for (const [k, v] of new URL(c.req.url).searchParams) {
+      if (k.startsWith('_cp_')) {
+        resolvedPath = resolvedPath.replace(`:${k.slice(4)}`, encodeURIComponent(v));
+      } else {
+        forwardParams.set(k, v);
+      }
+    }
+    const search = forwardParams.toString() ? `?${forwardParams.toString()}` : '';
 
     let res: Response;
     try {
-      res = await conn.fetch(endpoint.path + search, init);
+      res = await conn.fetch(resolvedPath + search, init);
     } catch (e) {
       return c.json({ error: 'connector_error', detail: String(e) }, 502);
     }
