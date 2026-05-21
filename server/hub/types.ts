@@ -6,6 +6,7 @@
 
 import type { Hono } from 'hono';
 import type { CorpusDb } from '../db.ts';
+import type { CorpusServiceManifest } from './manifest.ts';
 
 /** 接続先サービスの種別。 frontend がローカル印 / マルチ印を出し分ける。 */
 export type ConnectorScope = 'local' | 'multi';
@@ -29,6 +30,11 @@ export interface ServiceConnector {
   health(): Promise<ConnectorHealth>;
   /** hub 表示用データの取得。 path は接続先サービスのエンドポイント相対パス。 */
   fetch(path: string, init?: RequestInit): Promise<Response>;
+  /**
+   * マニフェスト由来のコネクタ (ManifestConnector) はサービスマニフェストを返す。
+   * プラグインが手動登録するコネクタ (HttpServiceConnector) は undefined。
+   */
+  getManifest?(): CorpusServiceManifest | null;
 }
 
 /**

@@ -19,6 +19,8 @@ import { openDb } from './db.ts';
 import { requireAuth, startAuth } from './auth.ts';
 import { HubRegistry } from './hub/registry.ts';
 import { startHealthLoop } from './hub/aggregate.ts';
+import { readDiscoveryConfig, startDiscoveryLoop } from './hub/discovery.ts';
+import { makeTokenProvider } from './hub/tokens.ts';
 import { SelfConnector } from './connectors/builtin.ts';
 import { makeHubRouter } from './routes/hub.ts';
 import { makeMeRouter } from './routes/me.ts';
@@ -84,6 +86,13 @@ async function main(): Promise<void> {
   registry.addConnector(new SelfConnector());
   await registry.loadPluginPacks(process.env.CORPUS_PLUGIN_DIR);
 
+  // discovery (D1) + 認証トークン伝播 (D5)
+  const discoveryCfg = readDiscoveryConfig();
+  const tokenProvider = makeTokenProvider(
+    process.env.CORPUS_TOKEN_MODE,
+    CERNERE_BASE_URL,
+  );
+
   const app = new Hono();
   app.use('*', cors({ origin: '*', allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'] }));
 
@@ -106,10 +115,26 @@ async function main(): Promise<void> {
     }),
   );
 
+  // 自身のサービスマニフェスト (D6) — 別の Corpus から参照される時に使う。
+  // data / panels を上位へ公開するのは将来課題、 v0.2 は識別情報のみ。
+  app.get('/.well-known/corpus-service.json', (c) =>
+    c.json({
+      service: process.env.CORPUS_SERVICE_ID ?? 'corpus',
+      displayName: process.env.CORPUS_DISPLAY_NAME ?? 'Corpus',
+      version: '0.2.0',
+      corpusApi: 1,
+      health: '/api/health',
+      data: [],
+      panels: [],
+      auth: 'cernere-project-token',
+      cernereProjectKey: process.env.CORPUS_SERVICE_ID ?? 'corpus',
+    }),
+  );
+
   // /api/* は health を除き Cernere 認証必須
   app.use('/api/*', requireAuth);
   app.route('/api/me', makeMeRouter(db));
-  app.route('/api/hub', makeHubRouter(registry, db));
+  app.route('/api/hub', makeHubRouter(registry, db, tokenProvider));
   // プラグインモジュールの API を /api/x/<moduleId> に mount
   registry.mountRoutes(app);
 
@@ -124,6 +149,27 @@ async function main(): Promise<void> {
     const full = join(dir, file);
     if (!existsSync(full)) return c.json({ error: 'file_not_found' }, 404);
     const body = readFileSync(full);
+    const type = CONTENT_TYPES[extname(file)] ?? 'application/octet-stream';
+    return c.body(body, 200, { 'content-type': type });
+  });
+
+  // 参照サービスが公開する Corpus 用 UI コンポーネント (D4) をプロキシ配信。
+  // /api/* の外なので未認証 — UI コードなので動的 import 可能にする。
+  app.get('/hub-ui/:service/:file', async (c) => {
+    const { service, file } = c.req.param();
+    if (!/^[a-zA-Z0-9._-]+$/.test(file) || file.includes('..')) {
+      return c.json({ error: 'bad_path' }, 400);
+    }
+    const conn = registry.getConnector(service);
+    if (!conn) return c.json({ error: 'service_not_found' }, 404);
+    let res: Response;
+    try {
+      res = await conn.fetch(`/corpus-ui/${file}`);
+    } catch {
+      return c.json({ error: 'connector_error' }, 502);
+    }
+    if (!res.ok) return c.json({ error: 'ui_unavailable' }, 404);
+    const body = Buffer.from(await res.arrayBuffer());
     const type = CONTENT_TYPES[extname(file)] ?? 'application/octet-stream';
     return c.body(body, 200, { 'content-type': type });
   });
@@ -153,11 +199,13 @@ async function main(): Promise<void> {
     console.log(`[corpus] listening on http://localhost:${info.port}`);
     console.log(`[corpus] data dir: ${DATA_DIR}`);
     console.log(`[corpus] cernere: ${CERNERE_BASE_URL}`);
+    console.log(`[corpus] mode: ${discoveryCfg.mode} / token: ${tokenProvider.mode}`);
     console.log(`[corpus] modules: ${registry.listModules().map((m) => m.id).join(', ') || '(none)'}`);
-    console.log(`[corpus] connectors: ${registry.listConnectors().map((c) => c.id).join(', ')}`);
+    console.log(`[corpus] connectors: ${registry.listConnectors().map((c) => c.id).join(', ') || '(none)'}`);
   });
 
   startHealthLoop(registry, db);
+  startDiscoveryLoop(registry, discoveryCfg);
 }
 
 void main();
