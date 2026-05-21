@@ -282,8 +282,8 @@ inject してから `index.ts` を読む。 `.env` 直書き / Excubitor inject 
 | 版 | 内容 |
 |---|---|
 | **v0.0** | DESIGN.md 起草 |
-| **v0.1 scaffold** | server / public / desktop の骨格 + Cernere 認証 + コネクタ/プラグイン機構 + `/api/health` |
-| **v0.2 hub core** | コネクタ集約 + frontend shell の動的パネルロード + health 表示 |
+| **v0.1 scaffold** ✅ | server / public / desktop の骨格 + Cernere 認証 + コネクタ/プラグイン機構 + `/api/health` |
+| **v0.2 data hub** ✅ | サービスマニフェスト (D6) + discovery (D1) + トークン伝播抽象 (D5) + `/api/hub/{services,data}` + frontend のサービス/データ表示。 横断仕様 `VantanHub-DESIGN.md` §7-9 を実装 |
 | **v0.3 desktop** | Electron ローカルアプリ + local/multi 区別表示 |
 | **v0.4 polish** | external-id マッピング層 + Excubitor 登録 + README |
 | **v1.0** | VantanHub が Corpus 上で動作する状態 |

@@ -31,6 +31,33 @@ export interface HubOverview {
   counts: { up: number; degraded: number; down: number };
 }
 
+export interface ServiceDataInfo {
+  id: string;
+  title: string;
+  scope: ConnectorScope;
+}
+
+export interface ServicePanelInfo {
+  id: string;
+  title: string;
+  entry: string;
+  icon?: string;
+}
+
+/** /api/hub/services の要素 — コネクタ + そのサービスマニフェスト。 */
+export interface ServiceInfo {
+  id: string;
+  title: string;
+  scope: ConnectorScope;
+  manifest: {
+    displayName: string;
+    version: string;
+    auth: string;
+    data: ServiceDataInfo[];
+    panels: ServicePanelInfo[];
+  } | null;
+}
+
 /**
  * プラグインパネルの mount() に渡るコンテキスト。
  * panel.js は `export function mount(container, ctx) { ... }` を持つ。

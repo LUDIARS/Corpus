@@ -109,6 +109,35 @@ button.primary:hover { filter: brightness(1.1); }
 .badge-up { background: var(--up); }
 .badge-degraded { background: var(--degraded); }
 .badge-down { background: var(--down); }
+.badge-scope-local { background: #4a5168; }
+.badge-scope-multi { background: #3a5a8c; }
+
+/* --- service card (参照サービスのデータ) --- */
+.service-card {
+  background: var(--bg-2);
+  border: 1px solid var(--bg-3);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.9rem;
+  margin: 0.5rem 0;
+}
+.service-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.service-data-row { margin: 0.3rem 0; }
+.service-data-out {
+  background: var(--bg-3);
+  border-radius: 8px;
+  padding: 0.6rem;
+  margin: 0.2rem 0 0.5rem;
+  max-height: 14rem;
+  overflow: auto;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 
 /* mobile 縦画面 */
 @media (max-width: 640px) {

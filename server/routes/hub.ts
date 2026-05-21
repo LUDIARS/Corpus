@@ -1,10 +1,12 @@
 // /api/hub/* — hub frontend が叩く集約 API。
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import type { CorpusDb } from '../db.ts';
 import { buildOverview } from '../hub/aggregate.ts';
 import type { HubRegistry } from '../hub/registry.ts';
 import type { ConnectorInfo } from '../hub/types.ts';
+import type { TokenProvider } from '../hub/tokens.ts';
 
 interface HealthRow {
   connector_id: string;
@@ -13,7 +15,18 @@ interface HealthRow {
   checked_at: number;
 }
 
-export function makeHubRouter(registry: HubRegistry, db: CorpusDb): Hono {
+/** リクエストの Authorization から Bearer トークンを取り出す。 */
+function bearer(c: Context): string | null {
+  const h = c.req.header('authorization');
+  if (h && h.toLowerCase().startsWith('bearer ')) return h.slice(7).trim();
+  return null;
+}
+
+export function makeHubRouter(
+  registry: HubRegistry,
+  db: CorpusDb,
+  tokenProvider: TokenProvider,
+): Hono {
   const r = new Hono();
 
   // frontend shell がタブを描くためのモジュール一覧
@@ -43,6 +56,68 @@ export function makeHubRouter(registry: HubRegistry, db: CorpusDb): Hono {
   r.get('/overview', async (c) => {
     const overview = await buildOverview(registry, db);
     return c.json(overview);
+  });
+
+  // discovery / 手動登録の全サービスとそのマニフェスト (frontend が
+  // データタブ・パネルを描くために使う)
+  r.get('/services', (c) => {
+    const services = registry.listConnectors().map((conn) => {
+      const m = conn.getManifest?.() ?? null;
+      return {
+        id: conn.id,
+        title: conn.title,
+        scope: conn.scope,
+        manifest: m
+          ? {
+              displayName: m.displayName,
+              version: m.version,
+              auth: m.auth,
+              data: m.data.map((d) => ({
+                id: d.id,
+                title: d.title ?? d.id,
+                scope: d.scope,
+              })),
+              panels: m.panels,
+            }
+          : null,
+      };
+    });
+    return c.json({ services });
+  });
+
+  // データ集約 — マニフェスト宣言済みエンドポイントをコネクタ越しに取得する。
+  // 参照先トークンは TokenProvider (D5) が解決する。
+  r.get('/data/:service/:dataId', async (c) => {
+    const { service, dataId } = c.req.param();
+    const conn = registry.getConnector(service);
+    if (!conn) return c.json({ error: 'service_not_found' }, 404);
+    const manifest = conn.getManifest?.() ?? null;
+    if (!manifest) {
+      return c.json({ error: 'service_has_no_manifest' }, 404);
+    }
+    const endpoint = manifest.data.find((d) => d.id === dataId);
+    if (!endpoint) return c.json({ error: 'data_not_found' }, 404);
+
+    const token = await tokenProvider.getDownstreamToken(bearer(c), {
+      service: conn.id,
+      projectKey: manifest.cernereProjectKey ?? conn.id,
+    });
+    const headers: Record<string, string> = {};
+    if (token) headers['authorization'] = `Bearer ${token}`;
+
+    let res: Response;
+    try {
+      res = await conn.fetch(endpoint.path, { headers });
+    } catch (e) {
+      return c.json({ error: 'connector_error', detail: String(e) }, 502);
+    }
+    const text = await res.text();
+    return new Response(text, {
+      status: res.status,
+      headers: {
+        'content-type': res.headers.get('content-type') ?? 'application/json',
+      },
+    });
   });
 
   return r;
