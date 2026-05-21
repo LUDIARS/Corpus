@@ -77,7 +77,6 @@ async function main(): Promise<void> {
   const db = openDb(DB_PATH);
   startAuth({
     cernereBaseUrl: CERNERE_BASE_URL,
-    audience: AUDIENCE,
     adminIds: ADMIN_IDS,
   });
 

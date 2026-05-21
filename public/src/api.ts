@@ -1,11 +1,22 @@
 // Corpus frontend の API クライアント。
 //
-// token は ?token= クエリ (Cernere リダイレクト直後) または localStorage から得る。
+// token は Cernere の user accessToken。 Cernere SSO リダイレクト直後の
+// #token= ハッシュ (または ?token= クエリ) から取り込み、 localStorage に保持する。
+// Corpus サーバはこれを /api/auth/me で検証し、 参照先トークン発行にも使う。
 // 401 のときは Cernere ログインへ誘導する。
 
 const TOKEN_KEY = 'corpus_token';
 
 export function getToken(): string | null {
+  // Cernere SSO リダイレクトは #token= ハッシュで返す
+  const hashMatch = location.hash.match(/token=([^&]+)/);
+  if (hashMatch && hashMatch[1]) {
+    const tok = decodeURIComponent(hashMatch[1]);
+    localStorage.setItem(TOKEN_KEY, tok);
+    history.replaceState(null, '', location.pathname + location.search);
+    return tok;
+  }
+  // 一部フローは ?token= クエリ
   const url = new URL(location.href);
   const fromQuery = url.searchParams.get('token');
   if (fromQuery) {

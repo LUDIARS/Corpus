@@ -16,7 +16,9 @@
 ## アーキ要点
 
 - Hono + better-sqlite3 + esbuild + tsx (Bibliotheca / Memoria pattern)
-- Cernere PASETO V4 検証は `server/auth.ts` (公開鍵 6h 毎 refresh)
+- Cernere 認証は `server/auth.ts` — user accessToken を `/api/auth/me` で
+  検証 (5min キャッシュ)。 hub は参照先トークン発行 (D5) のため user accessToken
+  を保持する必要があり、 leaf サービスの project-token local 検証方式は採らない
 - 起動口は `server/bootstrap.ts`: Infisical machine identity →
   `ensureEnv()` で secret fetch & inject → `index.ts`
 - hub 機構は `server/hub/`: コネクタ抽象 + レジストリ + プラグインローダ

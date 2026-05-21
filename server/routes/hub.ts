@@ -1,8 +1,8 @@
 // /api/hub/* — hub frontend が叩く集約 API。
 
 import { Hono } from 'hono';
-import type { Context } from 'hono';
 import type { CorpusDb } from '../db.ts';
+import { getUserToken } from '../auth.ts';
 import { buildOverview } from '../hub/aggregate.ts';
 import type { HubRegistry } from '../hub/registry.ts';
 import type { ConnectorInfo } from '../hub/types.ts';
@@ -13,13 +13,6 @@ interface HealthRow {
   status: string;
   detail: string | null;
   checked_at: number;
-}
-
-/** リクエストの Authorization から Bearer トークンを取り出す。 */
-function bearer(c: Context): string | null {
-  const h = c.req.header('authorization');
-  if (h && h.toLowerCase().startsWith('bearer ')) return h.slice(7).trim();
-  return null;
 }
 
 export function makeHubRouter(
@@ -98,7 +91,7 @@ export function makeHubRouter(
     const endpoint = manifest.data.find((d) => d.id === dataId);
     if (!endpoint) return c.json({ error: 'data_not_found' }, 404);
 
-    const token = await tokenProvider.getDownstreamToken(bearer(c), {
+    const token = await tokenProvider.getDownstreamToken(getUserToken(c), {
       service: conn.id,
       projectKey: manifest.cernereProjectKey ?? conn.id,
     });
