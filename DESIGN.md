@@ -353,7 +353,7 @@ descriptor は `Panel → Section[] → Component[]` の階層。
     "body": "{purpose}", "meta": "{owner_display_name}",
     "actions": [ /* ActionDescriptor — 単発 API 呼び出し */ ],
     "edit": {                          // 任意 — item をインライン編集
-      "dataId": "<data id>", "method": "PATCH", "params": { "id": "{id}" },
+      "dataId": "<data id>", "method": "PUT" /* or PATCH */, "params": { "id": "{id}" },
       "success": "更新しました",
       "fields": [ /* FormField — item の値で pre-fill される */ ] } } }
 ```
@@ -486,7 +486,8 @@ PATCH する (一覧上のインライン編集)。
 - `form` select の `optionsPath` — 選択肢レスポンス内の配列パス (§13.4-2)
 - `form` select の `optionDetail` — 選択中オプションの詳細表示 (§13.4-2)
 - `form` select の `options` — 静的な固定 enum (Bibliotheca pilot で判明、 §13.4-2)
-- `list` item の `edit` — 一覧上のインライン編集フォーム (§13.4-1)
+- `list` item の `edit` — 一覧上のインライン編集フォーム。 method は PUT/PATCH
+  両対応 (Actio は PUT、 Aedilis は PATCH。 §13.4-1)
 - ActionDescriptor の `kind: "toggle"` — on/off ステート操作 (§13.6)
 
 ## 14. オープン論点
