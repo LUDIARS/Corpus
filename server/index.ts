@@ -98,7 +98,13 @@ async function main(): Promise<void> {
   );
 
   const app = new Hono();
-  app.use('*', cors({ origin: '*', allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'] }));
+  app.use(
+    '*',
+    cors({
+      origin: '*',
+      allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    }),
+  );
 
   // health は認証不要 — auth middleware より前に登録する
   app.get('/api/health', (c) =>

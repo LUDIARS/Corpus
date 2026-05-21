@@ -34,6 +34,8 @@ interface LoadedModule {
   routes: Hono[];
   /** registerData で宣言された hub データエンドポイント (path は絶対化済)。 */
   manifestData: ManifestDataEndpoint[];
+  /** setup 中に registerConnector された分。 setup 成功後にまとめて commit する。 */
+  connectors: ServiceConnector[];
 }
 
 function makeLogger(tag: string): Logger {
@@ -170,11 +172,14 @@ export class HubRegistry {
       panel: null,
       routes: [],
       manifestData: [],
+      connectors: [],
     };
     const ctx: CorpusContext = {
       db: this.db,
       moduleId: module.id,
-      registerConnector: (c) => this.addConnector(c),
+      // setup 失敗時にコネクタが半端に残らないよう、 一旦 entry に溜めて
+      // setup 成功後にまとめて commit する (部分登録リーク対策)。
+      registerConnector: (c) => entry.connectors.push(c),
       registerRoute: (sub) => entry.routes.push(sub),
       registerPanel: (p) => {
         entry.panel = { ...p, moduleId: module.id, entry: p.entry ?? 'panel.js' };
@@ -193,6 +198,8 @@ export class HubRegistry {
       logger: makeLogger(`mod:${module.id}`),
     };
     await module.setup(ctx);
+    // setup がここまで throw せず到達したら、 登録物を一括 commit する。
+    for (const conn of entry.connectors) this.addConnector(conn);
     this.loaded.push(entry);
   }
 
