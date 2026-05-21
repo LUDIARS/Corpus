@@ -29,13 +29,15 @@ export interface FormField {
   input: FieldInput;
   required?: boolean;
   maxLength?: number;
-  /** input='select' のとき選択肢を引く data id。 */
+  /** input='select' の静的選択肢 (data 不要の固定 enum 用)。 */
+  options?: { label: string; value: string }[];
+  /** input='select' のとき選択肢を引く data id (options の代替)。 */
   optionsSource?: string;
   /** 選択肢レスポンス内の配列パス。 */
   optionsPath?: string;
   optionLabel?: string;
   optionValue?: string;
-  /** 選択中オプションのレコードから表示する詳細フィールド。 */
+  /** 選択中オプションのレコードから表示する詳細フィールド (optionsSource 時)。 */
   optionDetail?: { label: string; value: string }[];
 }
 

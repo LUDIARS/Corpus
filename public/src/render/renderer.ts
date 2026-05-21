@@ -184,9 +184,19 @@ function renderField(field: FormField, ctx: RenderContext): FieldControl {
   const detailBox = el('div', 'corpus-field-detail');
   if (field.optionDetail) wrap.appendChild(detailBox);
 
-  // select の選択肢を非同期ロード
+  // select の選択肢
   let optionRecords: Record<string, unknown>[] = [];
-  if (field.input === 'select' && field.optionsSource) {
+  if (field.input === 'select' && field.options) {
+    // 静的選択肢
+    const sel = input as HTMLSelectElement;
+    for (const o of field.options) {
+      const opt = el('option');
+      opt.value = o.value;
+      opt.textContent = o.label;
+      sel.appendChild(opt);
+    }
+  } else if (field.input === 'select' && field.optionsSource) {
+    // data id から非同期ロード
     const optionsSource = field.optionsSource;
     void (async () => {
       try {
