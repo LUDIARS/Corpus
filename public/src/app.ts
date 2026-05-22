@@ -19,6 +19,8 @@ import type {
   ServicePanelInfo,
   ServicePanelModule,
 } from './types.ts';
+import { renderPanel } from './render/renderer.ts';
+import type { PanelDescriptor, RenderContext } from './render/types.ts';
 
 const app = document.getElementById('app') as HTMLElement;
 
@@ -195,7 +197,7 @@ async function apiFetchForPanel(
   return fetch(path, { ...init, headers });
 }
 
-/** 参照サービス (Bb / Ae 等) の Corpus 用 UI コンポーネントを表示する (D4)。 */
+/** 参照サービス (Bb / Ae 等) の Corpus 用 UI パネルを表示する (D4 / §13)。 */
 async function renderServicePanel(
   container: HTMLElement,
   svc: ServiceInfo,
@@ -203,6 +205,14 @@ async function renderServicePanel(
   identity: Identity,
 ): Promise<void> {
   container.innerHTML = '';
+  if (panel.kind === 'declarative') {
+    return renderDeclarativePanel(container, svc, panel, identity);
+  }
+  // script panel (旧来 D4) — entry の panel.js を動的 import して mount()
+  if (!panel.entry) {
+    container.appendChild(el('p', 'error', 'panel に entry がありません。'));
+    return;
+  }
   const ctx: ServicePanelContext = {
     service: svc.id,
     identity,
@@ -213,7 +223,6 @@ async function renderServicePanel(
       ),
   };
   try {
-    // entry が絶対パスならそのまま、 そうでなければ旧式 (/corpus-ui/<entry>) とみなす
     const entryPath = panel.entry.startsWith('/')
       ? panel.entry
       : `/corpus-ui/${panel.entry}`;
@@ -230,6 +239,54 @@ async function renderServicePanel(
       el('p', 'error', `サービスパネルの読み込みに失敗しました: ${String(e)}`),
     );
   }
+}
+
+/** declarative panel — UI descriptor を Corpus 内蔵レンダラで描く (§13)。 */
+async function renderDeclarativePanel(
+  container: HTMLElement,
+  svc: ServiceInfo,
+  panel: ServicePanelInfo,
+  identity: Identity,
+): Promise<void> {
+  let descriptor: PanelDescriptor | null = panel.ui ?? null;
+  if (!descriptor && panel.uiEndpoint) {
+    try {
+      const res = await apiFetchForPanel(`/hub-ui/${svc.id}${panel.uiEndpoint}`);
+      descriptor = (await res.json()) as PanelDescriptor;
+    } catch (e) {
+      container.appendChild(
+        el('p', 'error', `UI descriptor の取得に失敗しました: ${String(e)}`),
+      );
+      return;
+    }
+  }
+  if (!descriptor) {
+    container.appendChild(el('p', 'error', 'declarative panel に ui がありません。'));
+    return;
+  }
+  const ctx: RenderContext = {
+    identity: {
+      userId: identity.userId,
+      displayName: identity.displayName,
+      isAdmin: identity.isAdmin,
+    },
+    data: (dataId, opts) => {
+      const u = new URL(
+        `/api/hub/data/${svc.id}/${encodeURIComponent(dataId)}`,
+        location.origin,
+      );
+      for (const [k, v] of Object.entries(opts?.params ?? {})) {
+        u.searchParams.set(`_cp_${k}`, v);
+      }
+      const init: RequestInit = { method: opts?.method ?? 'GET' };
+      if (opts?.body !== undefined) {
+        init.body = JSON.stringify(opts.body);
+        init.headers = { 'content-type': 'application/json' };
+      }
+      return apiFetchForPanel(u.pathname + u.search, init);
+    },
+  };
+  renderPanel(container, descriptor, ctx);
 }
 
 function renderShell(

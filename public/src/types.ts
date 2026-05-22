@@ -1,5 +1,7 @@
 // frontend 用の型 (server 側 hub/types.ts の表示用ミラー)。
 
+import type { PanelDescriptor } from './render/types.ts';
+
 export type ConnectorScope = 'local' | 'multi';
 export type HealthStatus = 'up' | 'down' | 'degraded';
 
@@ -42,7 +44,14 @@ export interface ServiceDataInfo {
 export interface ServicePanelInfo {
   id: string;
   title: string;
-  entry: string;
+  /** 'script' (panel.js) | 'declarative' (UI descriptor)。 省略時は script 扱い。 */
+  kind?: 'script' | 'declarative';
+  /** kind=script — panel.js のパス。 */
+  entry?: string;
+  /** kind=declarative — インライン UI descriptor。 */
+  ui?: PanelDescriptor;
+  /** kind=declarative — descriptor を返すパス。 */
+  uiEndpoint?: string;
   icon?: string;
 }
 
