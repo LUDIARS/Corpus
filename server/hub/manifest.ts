@@ -16,14 +16,30 @@ export interface ManifestDataEndpoint {
   title?: string;
 }
 
-/** マニフェストが宣言する hub UI パネル (D4 — 当面 Bb / Ae のみ)。 */
-export interface ManifestPanel {
+/** script panel — サービスが panel.js を配信し mount() を実行する (D4 / 旧来)。 */
+export interface ScriptPanel {
   id: string;
+  kind?: 'script';
   title: string;
-  /** サービスが配信する panel スクリプトのパス (例 '/corpus-ui/loans.js')。 */
+  /** panel スクリプトのパス (例 '/corpus-ui/loans.js')。 */
   entry: string;
   icon?: string;
 }
+
+/** declarative panel — UI を JSON descriptor で宣言し Corpus 内蔵レンダラが描く (§13)。 */
+export interface DeclarativePanel {
+  id: string;
+  kind: 'declarative';
+  title: string;
+  /** UI descriptor のインライン宣言。 */
+  ui?: unknown;
+  /** descriptor を返すエンドポイントのパス (ui の代替)。 */
+  uiEndpoint?: string;
+  icon?: string;
+}
+
+/** マニフェストが宣言する hub UI パネル。 */
+export type ManifestPanel = ScriptPanel | DeclarativePanel;
 
 /** GET /.well-known/corpus-service.json のレスポンス。 */
 export interface CorpusServiceManifest {
@@ -87,10 +103,15 @@ export function normalizeManifest(
         )
       : [],
     panels: Array.isArray(raw.panels)
-      ? raw.panels.filter(
-          (p): p is ManifestPanel =>
-            !!p && typeof p.id === 'string' && typeof p.entry === 'string',
-        )
+      ? (raw.panels as unknown[]).filter((p): p is ManifestPanel => {
+          if (!p || typeof p !== 'object') return false;
+          const o = p as Record<string, unknown>;
+          if (typeof o.id !== 'string' || typeof o.title !== 'string') return false;
+          // declarative は ui / uiEndpoint、 script (既定) は entry を要求する
+          return o.kind === 'declarative'
+            ? o.ui != null || typeof o.uiEndpoint === 'string'
+            : typeof o.entry === 'string';
+        })
       : [],
     auth: typeof raw.auth === 'string' ? raw.auth : 'none',
     cernereProjectKey:
