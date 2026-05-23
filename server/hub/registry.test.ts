@@ -11,6 +11,7 @@ function fakeConnector(
     id,
     title: id,
     scope,
+    baseUrl: '',
     health: async (): Promise<ConnectorHealth> => ({ status: 'up' }),
     fetch: async () => new Response('{}'),
   };

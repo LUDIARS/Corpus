@@ -5,7 +5,7 @@ import {
   makeTokenProvider,
 } from './tokens.ts';
 
-const target = { service: 'x', projectKey: 'x' };
+const target = { service: 'x', projectKey: 'x', baseUrl: 'http://localhost:9999' };
 
 describe('PassthroughTokenProvider', () => {
   it('受信トークンをそのまま返す', async () => {
