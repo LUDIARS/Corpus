@@ -26,11 +26,30 @@ export interface DiscoveryConfig {
   remoteUrl: string | null;
 }
 
+/**
+ * local モードの discovery 既定 probe port 一覧。 LUDIARS の
+ * `infra/PORT-MAP.md` (`reference_ludiars_port_map`) に従う:
+ *   - 8888  Actio backend (shared infra)
+ *   - 17330 Concordia backend (loopback only)
+ *   - 17370 Susurrus core (loopback only)
+ *   - 17400 Quaestor backend (loopback only)
+ *   - 17501 Bibliotheca (loopback only)
+ *   - 17502 Aedilis (loopback only、 PORT-MAP 未掲載だが Aedilis spec 既定)
+ *   - 17777 Custos
+ *   - 5180  Memoria dev (legacy 既定)
+ *
+ * 不在 port は probe で接続拒否されて静かに skip されるので増やしても安全。
+ * 新サービスを足すときはここに 1 行追加 + PORT-MAP を更新する。 `env`
+ * `CORPUS_LOCAL_PROBE_PORTS` で完全上書き可。
+ */
+const DEFAULT_LOCAL_PROBE_PORTS =
+  '5180,8888,17330,17370,17400,17501,17502,17777';
+
 /** env から discovery 設定を読む。 */
 export function readDiscoveryConfig(): DiscoveryConfig {
   const mode: CorpusMode =
     process.env.CORPUS_MODE === 'local' ? 'local' : 'server';
-  const localPorts = (process.env.CORPUS_LOCAL_PROBE_PORTS ?? '5180,8888')
+  const localPorts = (process.env.CORPUS_LOCAL_PROBE_PORTS ?? DEFAULT_LOCAL_PROBE_PORTS)
     .split(',')
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n) && n > 0);

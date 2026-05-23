@@ -30,6 +30,23 @@ describe('readDiscoveryConfig', () => {
     expect(cfg.remoteUrl).toBe('https://hub.example.com');
   });
 
+  it('local モードで env 未指定なら LUDIARS PORT-MAP の主要 port が既定', () => {
+    process.env.CORPUS_MODE = 'local';
+    const cfg = readDiscoveryConfig();
+    expect(cfg.mode).toBe('local');
+    // Bibliotheca / Aedilis / Concordia / Susurrus / Quaestor / Actio / Memoria / Custos
+    // が含まれること。 不在 port は probe 段階で接続拒否されて skip されるので
+    // 既定リストを広めに持つ。
+    expect(cfg.localPorts).toContain(5180);   // Memoria
+    expect(cfg.localPorts).toContain(8888);   // Actio
+    expect(cfg.localPorts).toContain(17330);  // Concordia
+    expect(cfg.localPorts).toContain(17370);  // Susurrus
+    expect(cfg.localPorts).toContain(17400);  // Quaestor
+    expect(cfg.localPorts).toContain(17501);  // Bibliotheca
+    expect(cfg.localPorts).toContain(17502);  // Aedilis
+    expect(cfg.localPorts).toContain(17777);  // Custos
+  });
+
   it('server モードの参照先リストを読む (末尾スラッシュ除去)', () => {
     process.env.CORPUS_SERVER_SERVICES = 'https://a.example.com, https://b.example.com/';
     const cfg = readDiscoveryConfig();
