@@ -39,7 +39,7 @@ export class HttpServiceConnector implements ServiceConnector {
   readonly id: string;
   readonly title: string;
   readonly scope: ConnectorScope;
-  private readonly baseUrl: string;
+  readonly baseUrl: string;
   private readonly healthPath: string;
   private readonly headers: Record<string, string>;
 
@@ -85,6 +85,7 @@ export class SelfConnector implements ServiceConnector {
   readonly id = 'corpus';
   readonly title = 'Corpus';
   readonly scope: ConnectorScope = 'local';
+  readonly baseUrl = '';
 
   async health(): Promise<ConnectorHealth> {
     return { status: 'up' };

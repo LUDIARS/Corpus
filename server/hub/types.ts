@@ -26,6 +26,12 @@ export interface ServiceConnector {
   id: string;
   title: string;
   scope: ConnectorScope;
+  /**
+   * 接続先サービスの baseUrl。 トークン発行時に Cernere に `hub_url` として渡し
+   * PASETO の aud claim を組み立てる (Cernere Issue #91 Phase 1)。 baseUrl 未確定の
+   * コネクタは空文字で OK (= HS256 旧経路に fallback)。
+   */
+  readonly baseUrl: string;
   /** 到達性チェック。 接続先が落ちていても throw せず status:'down' を返すこと。 */
   health(): Promise<ConnectorHealth>;
   /** hub 表示用データの取得。 path は接続先サービスのエンドポイント相対パス。 */
