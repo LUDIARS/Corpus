@@ -31,6 +31,38 @@ npm install
 npm run dev                 # Corpus server を子プロセス起動 + Electron 窓
 ```
 
+## 一括 dev ツール (scripts/)
+
+Corpus は LUDIARS hub なので、 開発時は他サービス (Cernere / Bibliotheca /
+Aedilis 等) を並列起動して manifest を probe するのが一般的。 そのための
+2 つの dev utility が `scripts/` にある。
+
+### サービス一括起動: `npm run launch`
+
+```sh
+npm run launch:list                      # 知ってる service ID と port を表示
+npm run launch -- bibliotheca aedilis    # 2 サービスを並列起動
+npm run launch -- --with-cernere bibliotheca aedilis
+                                         # cernere を先頭に挿入 (推奨)
+npm run launch -- --all                  # registry の全サービス
+```
+
+`[<id>]` プリフィックスで stdout/stderr を区別表示。 Ctrl+C で全部 kill。
+1 サービスがクラッシュしても他は継続。 サービス registry は
+`scripts/services.ts` (= `infra/PORT-MAP.md` + `server/hub/discovery.ts` と同期)。
+
+### Infisical 一括操作: `npm run infisical`
+
+```sh
+npm run infisical -- gen bibliotheca aedilis      # 2 サービスで env:gen
+npm run infisical -- initialize --all             # env-cli を持つ全サービスで初期値登録
+npm run infisical -- list memoria                 # Memoria の env 一覧
+npm run infisical -- set FOO=bar bibliotheca      # 1 key 設定 (--代替で渡す)
+```
+
+op は `setup / test / gen / list / get / set / initialize` (各サービスの
+`env:<op>` script に対応)。 対話 prompt を取り違えないよう直列実行。
+
 ## プラグインパック
 
 `CORPUS_PLUGIN_DIR` にプラグインパックのルートを指すと、 配下の各モジュールを
