@@ -63,6 +63,50 @@ npm run infisical -- set FOO=bar bibliotheca      # 1 key 設定 (--代替で渡
 op は `setup / test / gen / list / get / set / initialize` (各サービスの
 `env:<op>` script に対応)。 対話 prompt を取り違えないよう直列実行。
 
+### Infisical 初期設定の一括化: `setup-batch`
+
+`env:setup` の対話 5 項目 (siteUrl / projectId / environment / clientId /
+clientSecret) のうち **projectId だけが per-service**、 他は通常 1 つの
+machine identity を全サービスで共有する。 これを 1 config + 1 コマンドで
+全サービスに反映する `setup-batch` がある。
+
+```sh
+# 1) テンプレを生成 (.infisical-batch.json — gitignored)
+npm run infisical -- setup-batch --init
+
+# 2) 各 service.projectId と defaults.client* を埋める
+#    (clientId / clientSecret は 1 machine identity を共有想定)
+
+# 3) 一括書込
+npm run infisical -- setup-batch --all
+# → 各サービスの .env.secrets を直接生成 (env-cli の対話を bypass)
+
+# 4) 接続確認
+npm run infisical -- test --all
+```
+
+`.env.secrets` が既に存在するサービスは **skip** (上書きしたい場合は
+`--force`)。 `--force` 無しなら誤上書きで既存設定を壊さない。
+
+`.infisical-batch.json` の構造:
+
+```json
+{
+  "defaults": {
+    "siteUrl": "https://app.infisical.com",
+    "environment": "dev",
+    "clientId": "<shared>",
+    "clientSecret": "<shared>"
+  },
+  "services": {
+    "cernere":     { "projectId": "abc..." },
+    "bibliotheca": { "projectId": "def..." },
+    "aedilis":     { "projectId": "ghi..." }
+    // service 側で defaults を override 可
+  }
+}
+```
+
 ## プラグインパック
 
 `CORPUS_PLUGIN_DIR` にプラグインパックのルートを指すと、 配下の各モジュールを
