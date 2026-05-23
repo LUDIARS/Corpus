@@ -1,0 +1,74 @@
+{
+  "descriptorVersion": 1,
+  "title": "蔵書・機材 貸出",
+  "sections": [
+    {
+      "title": "貸出",
+      "components": [
+        {
+          "type": "form",
+          "submit": { "dataId": "loans", "method": "POST", "success": "貸出を記録しました" },
+          "fields": [
+            {
+              "name": "source",
+              "label": "種別",
+              "input": "select",
+              "required": true,
+              "options": [
+                { "label": "本 (ISBN)", "value": "book" },
+                { "label": "機材 (QR)", "value": "equipment" }
+              ]
+            },
+            { "name": "external_key", "label": "ISBN / QR コード", "input": "text", "required": true },
+            { "name": "due_at", "label": "返却期限", "input": "date" },
+            { "name": "note", "label": "メモ", "input": "text", "maxLength": 200 }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "貸出中",
+      "components": [
+        {
+          "type": "list",
+          "dataSource": "loans-open",
+          "itemsPath": "items",
+          "itemKey": "id",
+          "empty": "貸出中の物品はありません",
+          "item": {
+            "title": "{label}",
+            "subtitle": "{external_key} ・ {borrowed_at|datetime}",
+            "meta": "{borrower_display_name}",
+            "actions": [
+              {
+                "label": "返却",
+                "dataId": "loan-return",
+                "method": "POST",
+                "params": { "id": "{id}" },
+                "confirm": "返却済みにしますか?",
+                "success": "返却しました",
+                "requires": "admin"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "title": "自分の貸出",
+      "components": [
+        {
+          "type": "list",
+          "dataSource": "loans-mine",
+          "itemsPath": "items",
+          "itemKey": "id",
+          "empty": "借りている物品はありません",
+          "item": {
+            "title": "{label}",
+            "subtitle": "{external_key} ・ {borrowed_at|datetime}"
+          }
+        }
+      ]
+    }
+  ]
+}
