@@ -41,19 +41,29 @@
 
 ### 1.2 Actio の自前 SPA 撤去 (step 4 後半)
 
-**現状**:
-- `Actio/src/corpus.ts` は declarative 宣言済 (205 行)
-- frontend/ は **Vite + React 19** (Bibliotheca と違ってフレームワーク重め)
-- 自前 SPA (frontend/dist/src/app.js) が標準 UI
+**現状 (2026-05-23 更新)**:
+- ✅ **declarative β ページ追加済** — `Actio/frontend/declarative.html` + `frontend/src/declarative.ts` + `frontend/src/corpus-renderer/` (vendor copy)
+- ✅ Vite multi-entry build 設定済 (`vite.config.ts` の `build.rollupOptions.input` に main + declarative)
+- ✅ `/.well-known` proxy を vite dev server に追加
+- 既存 React 19 SPA は無改変で共存中
+- 取込スコープ: 新規タスクフォーム / タスク一覧 (inline edit + 削除 action)
+- 取込外: カレンダー / グループ / PM / smart-scheduler / facility-booking 等の全モジュール UI
 
-**やること** (Bibliotheca PR #5 パターンを移植):
-1. `Actio/frontend/src/corpus-renderer/` に Corpus からの vendor copy を置く
-2. `Actio/frontend/declarative.html` + `frontend/src/declarative.ts` を新規追加
-3. `vite.config.ts` の `build.rollupOptions.input` に declarative.html を加えて multi-entry mode に
-4. React 側 (main.tsx) には触らない (既存 UI 維持)
-5. 表現力ギャップが出たら descriptor 拡張 PR
+**次のステップ**:
+1. ブラウザ動作確認 (cookie auth 経路の検証も含む)
+2. 表現力ギャップ洗い出し
+3. ギャップを §13.4 descriptor 拡張で埋める (Aedilis / Bibliotheca と同じパターン)
+4. React UI に「📋 declarative β」 リンク追加 → discoverable に
+5. SPA 撤去/最小化はカレンダー等の主要モジュールを descriptor 化してから
 
-**descriptor 表現力レビューが先に必要かも**: Actio のタスク管理 UI (drag-drop / dependent select 等) が現行 9 component (list/form/table/modal/grid/stack/...) で書けるか先に検証 → 不足 component は Corpus PR で追加してから移植
+**参照**:
+- `Actio/frontend/declarative.html` (新規 β ページ)
+- `Actio/frontend/src/declarative.ts` (bootstrap — cookie auth 経路)
+- `Actio/frontend/vite.config.ts` (multi-entry + /.well-known proxy)
+- `Actio` PR #130 (declarative-tasks-panel)
+- `Bibliotheca` PR #5 (先行実装パターン)
+
+**descriptor 表現力レビュー (移植後の宿題)**: Actio の重め UI (drag-drop / dependent select / dependency graph 等) が現行 9 component で書けるか実地検証 → 不足 component は Corpus PR で追加してから次の panel を declarative 化
 
 ### 1.3 §14 オープン論点を閉じる
 
