@@ -55,8 +55,13 @@ const PUBLIC_DIR = resolve(
     : join(__dirname, '..', 'public'),
 );
 
-const CERNERE_BASE_URL = requireEnv('CERNERE_BASE_URL');
-const AUDIENCE = requireEnv('CORPUS_PUBLIC_URL');
+const NO_AUTH = process.env.CORPUS_NO_AUTH === '1';
+const CERNERE_BASE_URL = NO_AUTH
+  ? (process.env.CERNERE_BASE_URL?.trim() || 'http://noauth.invalid')
+  : requireEnv('CERNERE_BASE_URL');
+const AUDIENCE = NO_AUTH
+  ? (process.env.CORPUS_PUBLIC_URL?.trim() || `http://localhost:${PORT}`)
+  : requireEnv('CORPUS_PUBLIC_URL');
 // external-id マッピングの issuer。 単一 Cernere 運用では CERNERE_BASE_URL を使う。
 const CERNERE_ISSUER =
   process.env.CORPUS_CERNERE_ISSUER?.trim() || CERNERE_BASE_URL;
@@ -78,12 +83,16 @@ const CONTENT_TYPES: Record<string, string> = {
 
 async function main(): Promise<void> {
   const db = openDb(DB_PATH);
-  startAuth({
-    cernereBaseUrl: CERNERE_BASE_URL,
-    adminIds: ADMIN_IDS,
-    db,
-    issuer: CERNERE_ISSUER,
-  });
+  if (NO_AUTH) {
+    console.log('[corpus] CORPUS_NO_AUTH=1 — Cernere 認証 bypass、 dev identity で起動');
+  } else {
+    startAuth({
+      cernereBaseUrl: CERNERE_BASE_URL,
+      adminIds: ADMIN_IDS,
+      db,
+      issuer: CERNERE_ISSUER,
+    });
+  }
 
   // hub 機構: 組み込みコネクタ + プラグインパック
   const registry = new HubRegistry(db);
@@ -218,7 +227,7 @@ async function main(): Promise<void> {
   serve({ fetch: app.fetch, port: PORT }, (info) => {
     console.log(`[corpus] listening on http://localhost:${info.port}`);
     console.log(`[corpus] data dir: ${DATA_DIR}`);
-    console.log(`[corpus] cernere: ${CERNERE_BASE_URL}`);
+    console.log(`[corpus] cernere: ${NO_AUTH ? '(bypassed)' : CERNERE_BASE_URL}`);
     console.log(
       `[corpus] mode: ${discoveryCfg.mode} / token: ${tokenProvider.mode}` +
         (discoveryCfg.remoteUrl ? ` / remote: ${discoveryCfg.remoteUrl}` : ''),
