@@ -9,8 +9,11 @@ import type {
   FormField,
   ListComponent,
   ListItemSpec,
+  ModalComponent,
+  PaginationSpec,
   PanelDescriptor,
   RenderContext,
+  TableComponent,
 } from './types.ts';
 
 // ── DOM / 値ヘルパ ──────────────────────────────────────────────────────────
@@ -341,27 +344,99 @@ function renderEditForm(
   return form;
 }
 
+// ── pagination helpers ─────────────────────────────────────────────────────
+
+interface PaginationState {
+  page: number;
+  isLast: boolean;
+  total: number | null;
+}
+
+function paginationParams(spec: PaginationSpec, page: number): Record<string, string> {
+  const out: Record<string, string> = {};
+  out[spec.pageParam ?? 'page'] = String(page);
+  if (spec.limitParam !== undefined) out[spec.limitParam] = String(spec.pageSize);
+  return out;
+}
+
+function readTotal(json: unknown, path?: string): number | null {
+  if (!path) return null;
+  const v = getByPath(json, path);
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  return null;
+}
+
+function renderPaginationBar(
+  spec: PaginationSpec,
+  state: PaginationState,
+  onJump: (page: number) => void,
+): HTMLElement {
+  const bar = el('div', 'corpus-pagination');
+  const prev = el('button', 'corpus-btn ghost', '前へ');
+  prev.disabled = state.page <= (spec.startPage ?? 1);
+  prev.onclick = () => onJump(state.page - 1);
+
+  const labelText = state.total != null
+    ? `${state.page} / ${Math.max(1, Math.ceil(state.total / spec.pageSize))} (計 ${state.total})`
+    : `ページ ${state.page}`;
+  const label = el('span', 'corpus-pagination-label', labelText);
+
+  const next = el('button', 'corpus-btn ghost', '次へ');
+  next.disabled = state.isLast;
+  next.onclick = () => onJump(state.page + 1);
+
+  bar.append(prev, label, next);
+  return bar;
+}
+
 function renderList(comp: ListComponent, ctx: RenderContext): HTMLElement {
   const root = el('div', 'corpus-list');
   const status = makeStatus();
   const body = el('div', 'corpus-list-body');
-  root.append(body, status.node);
+  const paginationHost = el('div', 'corpus-pagination-host');
+  root.append(body, paginationHost, status.node);
+
+  const spec = comp.pagination;
+  const state: PaginationState = {
+    page: spec?.startPage ?? 1,
+    isLast: false,
+    total: null,
+  };
+
   const load = async (): Promise<void> => {
     body.innerHTML = '';
+    paginationHost.innerHTML = '';
+    let json: unknown;
     let items: Record<string, unknown>[];
     try {
-      const res = await ctx.data(comp.dataSource);
-      items = extractArray(await res.json(), comp.itemsPath);
+      const opts = spec ? { params: paginationParams(spec, state.page) } : undefined;
+      const res = await ctx.data(comp.dataSource, opts);
+      json = await res.json();
+      items = extractArray(json, comp.itemsPath);
     } catch (e) {
       body.appendChild(el('p', 'corpus-error', `取得失敗: ${String(e)}`));
       return;
     }
-    if (items.length === 0) {
+    if (items.length === 0 && state.page === (spec?.startPage ?? 1)) {
       body.appendChild(el('p', 'corpus-empty', comp.empty ?? '(なし)'));
-      return;
     }
     for (const item of items) {
       body.appendChild(renderListCard(comp, item, ctx, () => void load(), status.set));
+    }
+    if (spec) {
+      state.total = readTotal(json, spec.totalPath);
+      // total があれば終端判定、 無ければ stopWhenEmpty (既定 true) で「次が空なら最終」
+      if (state.total != null) {
+        state.isLast = state.page >= Math.max(1, Math.ceil(state.total / spec.pageSize));
+      } else if ((spec.stopWhenEmpty ?? true) && items.length < spec.pageSize) {
+        state.isLast = true;
+      } else {
+        state.isLast = false;
+      }
+      paginationHost.appendChild(renderPaginationBar(spec, state, (p) => {
+        state.page = Math.max(spec.startPage ?? 1, p);
+        void load();
+      }));
     }
   };
   void load();
@@ -427,20 +502,30 @@ function renderDetail(
   return root;
 }
 
-function renderTable(
-  comp: ComponentDescriptor & { type: 'table' },
-  ctx: RenderContext,
-): HTMLElement {
+function renderTable(comp: TableComponent, ctx: RenderContext): HTMLElement {
   const root = el('div', 'corpus-table-wrap');
   const status = makeStatus();
   const tableHost = el('div');
-  root.append(tableHost, status.node);
+  const paginationHost = el('div', 'corpus-pagination-host');
+  root.append(tableHost, paginationHost, status.node);
+
+  const spec = comp.pagination;
+  const state: PaginationState = {
+    page: spec?.startPage ?? 1,
+    isLast: false,
+    total: null,
+  };
+
   const load = async (): Promise<void> => {
     tableHost.innerHTML = '';
+    paginationHost.innerHTML = '';
+    let json: unknown;
     let rows: Record<string, unknown>[];
     try {
-      const res = await ctx.data(comp.dataSource);
-      rows = extractArray(await res.json(), comp.itemsPath);
+      const opts = spec ? { params: paginationParams(spec, state.page) } : undefined;
+      const res = await ctx.data(comp.dataSource, opts);
+      json = await res.json();
+      rows = extractArray(json, comp.itemsPath);
     } catch (e) {
       tableHost.appendChild(el('p', 'corpus-error', `取得失敗: ${String(e)}`));
       return;
@@ -471,9 +556,71 @@ function renderTable(
     }
     table.appendChild(tbody);
     tableHost.appendChild(table);
+
+    if (spec) {
+      state.total = readTotal(json, spec.totalPath);
+      if (state.total != null) {
+        state.isLast = state.page >= Math.max(1, Math.ceil(state.total / spec.pageSize));
+      } else if ((spec.stopWhenEmpty ?? true) && rows.length < spec.pageSize) {
+        state.isLast = true;
+      } else {
+        state.isLast = false;
+      }
+      paginationHost.appendChild(renderPaginationBar(spec, state, (p) => {
+        state.page = Math.max(spec.startPage ?? 1, p);
+        void load();
+      }));
+    }
   };
   void load();
   return root;
+}
+
+// ── modal ──────────────────────────────────────────────────────────────────
+
+function closeDialog(dialog: HTMLDialogElement): void {
+  // jsdom 等は HTMLDialogElement.close を未実装. fallback で close event を手動発火.
+  if (typeof dialog.close === 'function') {
+    dialog.close();
+  } else {
+    dialog.removeAttribute('open');
+    dialog.dispatchEvent(new Event('close'));
+  }
+}
+
+function renderModal(comp: ModalComponent, ctx: RenderContext): HTMLElement {
+  const variant = comp.variant ?? 'ghost';
+  const trigger = el('button', `corpus-btn ${variant}`, comp.label);
+  trigger.onclick = () => {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'corpus-modal';
+    const header = el('header', 'corpus-modal-header');
+    header.appendChild(el('h3', 'corpus-modal-title', comp.title ?? comp.label));
+    const closeBtn = el('button', 'corpus-modal-close', '×');
+    closeBtn.type = 'button';
+    closeBtn.setAttribute('aria-label', '閉じる');
+    closeBtn.onclick = () => closeDialog(dialog);
+    header.appendChild(closeBtn);
+    const bodyHost = el('div', 'corpus-modal-body');
+    for (const child of comp.components) {
+      const node = renderComponent(child, ctx);
+      if (node) bodyHost.appendChild(node);
+    }
+    dialog.append(header, bodyHost);
+    // dialog の外側クリックで閉じる (背景を click target にする)
+    dialog.addEventListener('click', (ev) => {
+      if (ev.target === dialog) closeDialog(dialog);
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    document.body.appendChild(dialog);
+    if (typeof (dialog as HTMLDialogElement).showModal === 'function') {
+      (dialog as HTMLDialogElement).showModal();
+    } else {
+      // showModal 非実装の場合は属性で open 状態にする
+      dialog.setAttribute('open', '');
+    }
+  };
+  return trigger;
 }
 
 function renderStat(
@@ -541,6 +688,8 @@ function renderComponent(
     }
     case 'custom':
       return renderCustom(comp);
+    case 'modal':
+      return renderModal(comp, ctx);
     case 'section': {
       const sec = el('div', 'corpus-subsection');
       if (comp.title) sec.appendChild(el('h4', 'corpus-subsection-title', comp.title));
