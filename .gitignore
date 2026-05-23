@@ -4,8 +4,6 @@ data/
 .env
 .env.secrets
 .env.local
-# scripts/infisical.ts setup-batch の shared credentials + per-service projectId 設定
-.infisical-batch.json
 public/app.js
 public/app.js.map
 desktop/out/
