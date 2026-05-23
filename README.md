@@ -23,6 +23,35 @@ cp .env.example .env        # CERNERE_BASE_URL 等を埋める
 npm run dev                 # サーバサイドアプリ (http://localhost:5185)
 ```
 
+### ローカルデバッグ (Cernere 不要)
+
+UI / hub の動作確認だけしたいときは Cernere を介さずに起動できる。 認証は
+bypass され、 全リクエストが固定の dev identity (`dev-user`, admin) で
+処理される。 downstream service への参照先トークン発行は機能しない (= 実
+データ取得は service 側も noauth でないと 401)。
+
+```sh
+npm run dev:debug                                  # --no-cernere --port=5187 のショートカット
+npm run dev -- --no-cernere --port=5187            # CLI args 個別指定
+npm run dev -- --no-cernere --port=5187 --mode=local --probe=17501,17502
+npm run dev -- --no-cernere --port=5187 --services=http://localhost:17501,http://localhost:17502
+```
+
+CLI args (env と同等、 env より優先):
+
+| flag | env | 用途 |
+|------|-----|------|
+| `--port=N` | `CORPUS_PORT` | listen port (default 5185) |
+| `--no-cernere` | `CORPUS_NO_AUTH=1` | 認証 bypass + CERNERE_BASE_URL を要求しない |
+| `--services=<list>` | `CORPUS_SERVER_SERVICES` | server モードで集約する baseUrl (カンマ区切り) |
+| `--mode=server\|local` | `CORPUS_MODE` | discovery モード |
+| `--probe=<ports>` | `CORPUS_LOCAL_PROBE_PORTS` | local モードで probe する port |
+| `--plugin-dir=<p>` | `CORPUS_PLUGIN_DIR` | プラグインパックの dir |
+| `--public-url=<u>` | `CORPUS_PUBLIC_URL` | 公開 URL (audience) |
+
+⚠️ `--no-cernere` / `CORPUS_NO_AUTH=1` は **ローカル開発専用**。 admin 権限の
+dev-user が全リクエストを処理する状態になるため、 本番では絶対に立てない。
+
 ローカルアプリ:
 
 ```sh

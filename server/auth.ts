@@ -110,7 +110,27 @@ function extractToken(c: Context): string | null {
   return m && m[1] ? decodeURIComponent(m[1]) : null;
 }
 
+/** --no-cernere / CORPUS_NO_AUTH=1 のとき requireAuth が返す固定 identity。
+ *  ローカルデバッグ専用 — 本番運用では絶対に CORPUS_NO_AUTH を立てない。 */
+const NO_AUTH_IDENTITY: AuthIdentity = {
+  userId: 'dev-user',
+  externalId: 'dev-user',
+  role: 'admin',
+  displayName: 'Dev User (CORPUS_NO_AUTH)',
+  projectKey: null,
+  isAdmin: true,
+};
+
 export const requireAuth: MiddlewareHandler = async (c, next) => {
+  if (process.env.CORPUS_NO_AUTH === '1') {
+    // 認証 bypass — UI / hub の動作確認用。 downstream service への参照先
+    // トークン発行は機能しない (userToken が空) ので、 services への
+    // 実データ取得は別途 noauth 設定された service でないと 401 になる。
+    c.set('auth', NO_AUTH_IDENTITY);
+    c.set('userToken', '');
+    await next();
+    return;
+  }
   const token = extractToken(c);
   if (!token) return c.json({ error: 'unauthorized' }, 401);
   const identity = await verifyToken(token);
