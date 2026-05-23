@@ -57,6 +57,22 @@ export interface ListItemSpec {
   };
 }
 
+/** list / table のページネーション設定。 ctx.data の params 経由でサーバへ伝える。 */
+export interface PaginationSpec {
+  /** 1 ページの件数。 */
+  pageSize: number;
+  /** params の page key 名 (既定: 'page')。 _cp_<key>=N が ctx.data 経由でサーバ query に乗る。 */
+  pageParam?: string;
+  /** params の limit key 名 (既定: 'limit')。 省略時は送信しない。 */
+  limitParam?: string;
+  /** 1-based 開始 page (既定: 1)。 */
+  startPage?: number;
+  /** レスポンスから総件数を読むパス (例: 'meta.total')。 あれば total / 最終 page を表示。 */
+  totalPath?: string;
+  /** total が無い場合に「次ページが空なら最終」 判定 (既定: true)。 */
+  stopWhenEmpty?: boolean;
+}
+
 export interface ListComponent {
   type: 'list';
   dataSource: string;
@@ -65,6 +81,7 @@ export interface ListComponent {
   empty?: string;
   requires?: Requires;
   item: ListItemSpec;
+  pagination?: PaginationSpec;
 }
 
 export interface FormComponent {
@@ -89,6 +106,24 @@ export interface TableComponent {
   requires?: Requires;
   columns: { header: string; value: string }[];
   rowActions?: ActionDescriptor[];
+  pagination?: PaginationSpec;
+}
+
+/**
+ * Modal — trigger button を 1 つ持ち、 クリックで <dialog> を開いて
+ * 内部 components を描画する。 confirm より複雑な分岐入力に用いる。
+ */
+export interface ModalComponent {
+  type: 'modal';
+  /** trigger button のラベル。 */
+  label: string;
+  /** modal 内の見出し (省略時はラベルを使う)。 */
+  title?: string;
+  requires?: Requires;
+  /** trigger ボタンのスタイル指定 (既定: 'ghost')。 */
+  variant?: 'primary' | 'ghost';
+  /** modal 内部に描く子 component 群。 */
+  components: ComponentDescriptor[];
 }
 
 export interface SectionComponent {
@@ -137,6 +172,7 @@ export type ComponentDescriptor =
   | TabsComponent
   | StatComponent
   | ActionButtonComponent
+  | ModalComponent
   | CustomComponent;
 
 export interface SectionDescriptor {
