@@ -15,8 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "launch": "tsx scripts/launch.ts",
-    "launch:list": "tsx scripts/launch.ts --list",
-    "infisical": "tsx scripts/infisical.ts"
+    "launch:list": "tsx scripts/launch.ts --list"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
