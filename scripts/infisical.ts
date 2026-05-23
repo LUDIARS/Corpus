@@ -4,48 +4,224 @@
 //   npx tsx scripts/infisical.ts <op> <id...> [--all]
 //
 // op:
-//   setup       初回 Infisical machine identity 設定 (対話)
-//   test        現状の secret 取得テスト
-//   gen         .env 生成
-//   initialize  デフォルト値を Infisical に登録
-//   list        現状の env 値を一覧
-//   get <key>   1 つ取得
-//   set <key=v> 1 つ設定
+//   setup        初回 Infisical machine identity 設定 (対話)
+//   setup-batch  shared credentials + per-service projectId を .infisical-batch.json
+//                から読んで非対話で各サービスの .env.secrets を書く
+//   setup-batch --init
+//                .infisical-batch.json テンプレを書き出す
+//   test         現状の secret 取得テスト
+//   gen          .env 生成
+//   initialize   デフォルト値を Infisical に登録
+//   list         現状の env 値を一覧
+//   get <key>    1 つ取得
+//   set <key=v>  1 つ設定
 //
 // 例:
-//   npx tsx scripts/infisical.ts gen bibliotheca aedilis    # 2 サービスで env:gen
-//   npx tsx scripts/infisical.ts initialize --all           # env-cli 持つ全 service で初期値登録
-//   npx tsx scripts/infisical.ts list memoria               # Memoria の env list
+//   npx tsx scripts/infisical.ts setup-batch --init       # テンプレ生成
+//   npx tsx scripts/infisical.ts setup-batch --all        # 全サービスへ書込
+//   npx tsx scripts/infisical.ts gen bibliotheca aedilis  # 2 サービスで env:gen
+//   npx tsx scripts/infisical.ts initialize --all         # env-cli 持つ全 service で初期値登録
+//   npx tsx scripts/infisical.ts list memoria             # Memoria の env list
 //
-// 各サービスは `<repoDir>/<subDir?>` で `npm run env:<op>` を順次実行 (並列ではなく
-// 直列、 対話プロンプトを取り違えないため)。 失敗があっても次のサービスに進む。
+// 通常の op は `<repoDir>/<subDir?>` で `npm run env:<op>` を順次実行
+// (並列ではなく直列、 対話プロンプトを取り違えないため)。 失敗があっても次の
+// サービスに進む。 setup-batch は npm script ではなく .env.secrets を直接書く。
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { SERVICES, findService, resolveIds } from './services.ts';
 
-const VALID_OPS = ['setup', 'test', 'gen', 'list', 'get', 'set', 'initialize'] as const;
+const VALID_OPS = [
+  'setup', 'setup-batch', 'test', 'gen', 'list', 'get', 'set', 'initialize',
+] as const;
 type Op = (typeof VALID_OPS)[number];
+
+const BATCH_CONFIG_PATH = '.infisical-batch.json';
+
+interface BatchDefaults {
+  siteUrl?: string;
+  environment?: string;
+  clientId?: string;
+  clientSecret?: string;
+}
+
+interface BatchServiceConfig {
+  projectId: string;
+  siteUrl?: string;
+  environment?: string;
+  clientId?: string;
+  clientSecret?: string;
+}
+
+interface BatchConfig {
+  defaults?: BatchDefaults;
+  services: Record<string, BatchServiceConfig>;
+}
 
 function printUsage(): void {
   console.log(`Usage:
   npx tsx scripts/infisical.ts <op> <id...> [--all]
-  npx tsx scripts/infisical.ts <op> get|set <key|key=value> <id...>
+  npx tsx scripts/infisical.ts get <key> <id...>
+  npx tsx scripts/infisical.ts set <key=value> <id...>
+  npx tsx scripts/infisical.ts setup-batch (--all | <id...>) [--force]
+  npx tsx scripts/infisical.ts setup-batch --init
 
 op: ${VALID_OPS.join(' | ')}
 
 Options:
   --all      env-cli を持つ全 service を対象 (hasEnvCli=true)
+  --init     setup-batch のテンプレ ${BATCH_CONFIG_PATH} を書き出す
+  --force    setup-batch: 既存 .env.secrets を上書き
   --help     これを表示
 
 例:
   npx tsx scripts/infisical.ts gen bibliotheca aedilis
   npx tsx scripts/infisical.ts initialize --all
-  npx tsx scripts/infisical.ts list memoria
+  npx tsx scripts/infisical.ts setup-batch --init
+  npx tsx scripts/infisical.ts setup-batch --all
 
-env-cli は ../Cernere/packages/env-cli の cli.ts を各サービスが呼ぶ wrapper。
-op 文字列はそのまま \`npm run env:<op>\` に渡される。`);
+setup-batch:
+  ${BATCH_CONFIG_PATH} (gitignored) に shared credentials + per-service projectId を
+  記述し、 各サービスの .env.secrets を非対話で生成する。 ProjectID は
+  サービス毎に違うが clientId/clientSecret は通常 1 つの machine identity を
+  共有する想定 (defaults でまとめて、 サービス側で override 可)。
+
+他の op は ../Cernere/packages/env-cli (各サービスが \`npm run env:<op>\` で呼ぶ)
+の wrapper。`);
+}
+
+// ── setup-batch 用 ────────────────────────────────────────────
+
+function loadBatchConfig(): BatchConfig {
+  const p = resolve(process.cwd(), BATCH_CONFIG_PATH);
+  if (!existsSync(p)) {
+    console.error(`${BATCH_CONFIG_PATH} が見つかりません。 先に setup-batch --init を実行してください`);
+    process.exit(1);
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(p, 'utf-8')) as BatchConfig;
+    if (typeof parsed !== 'object' || !parsed.services) {
+      throw new Error('services が無い');
+    }
+    return parsed;
+  } catch (e) {
+    console.error(`${BATCH_CONFIG_PATH} の parse に失敗: ${(e as Error).message}`);
+    process.exit(1);
+  }
+}
+
+function writeBatchTemplate(): void {
+  const p = resolve(process.cwd(), BATCH_CONFIG_PATH);
+  if (existsSync(p)) {
+    console.error(`${BATCH_CONFIG_PATH} は既に存在します — 上書きしません`);
+    process.exit(1);
+  }
+  const services: Record<string, BatchServiceConfig> = {};
+  for (const s of SERVICES) {
+    if (!s.hasEnvCli) continue;
+    services[s.id] = { projectId: '<your-infisical-project-id>' };
+  }
+  const tpl: BatchConfig = {
+    defaults: {
+      siteUrl: 'https://app.infisical.com',
+      environment: 'dev',
+      clientId: '<shared-universal-auth-client-id>',
+      clientSecret: '<shared-universal-auth-client-secret>',
+    },
+    services,
+  };
+  writeFileSync(p, JSON.stringify(tpl, null, 2) + '\n', 'utf-8');
+  console.log(`テンプレを生成しました: ${p}`);
+  console.log('編集して各サービスの projectId と shared credentials を埋めてください。');
+  console.log(`(${BATCH_CONFIG_PATH} は .gitignore 済 — commit されません)`);
+}
+
+function formatEnvSecrets(svc: { projectId: string; siteUrl: string; environment: string; clientId: string; clientSecret: string }): string {
+  return [
+    `# Infisical bootstrap (generated by Corpus scripts/infisical.ts setup-batch)`,
+    `INFISICAL_SITE_URL=${svc.siteUrl}`,
+    `INFISICAL_PROJECT_ID=${svc.projectId}`,
+    `INFISICAL_ENVIRONMENT=${svc.environment}`,
+    `INFISICAL_CLIENT_ID=${svc.clientId}`,
+    `INFISICAL_CLIENT_SECRET=${svc.clientSecret}`,
+    ``,
+  ].join('\n');
+}
+
+function runSetupBatch(rest: readonly string[]): void {
+  if (rest.includes('--init')) {
+    writeBatchTemplate();
+    return;
+  }
+  const force = rest.includes('--force');
+  const cfg = loadBatchConfig();
+  const d = cfg.defaults ?? {};
+
+  const { ids, unknown } = resolveIds(rest, { requireEnvCli: rest.includes('--all') });
+  if (unknown.length) {
+    console.error(`unknown service IDs: ${unknown.join(', ')}`);
+    process.exit(2);
+  }
+  if (!ids.length) {
+    console.error('対象サービスがありません。 <id...> か --all を指定してください');
+    process.exit(2);
+  }
+
+  let written = 0;
+  let skipped = 0;
+  for (const id of ids) {
+    const spec = findService(id);
+    if (!spec || !spec.hasEnvCli) {
+      console.warn(`[${id}] hasEnvCli=false — skip`);
+      skipped++;
+      continue;
+    }
+    const svcCfg = cfg.services[id];
+    if (!svcCfg) {
+      console.warn(`[${id}] ${BATCH_CONFIG_PATH} に services.${id} がありません — skip`);
+      skipped++;
+      continue;
+    }
+    const resolved = {
+      siteUrl:      svcCfg.siteUrl      ?? d.siteUrl      ?? 'https://app.infisical.com',
+      environment:  svcCfg.environment  ?? d.environment  ?? 'dev',
+      projectId:    svcCfg.projectId,
+      clientId:     svcCfg.clientId     ?? d.clientId,
+      clientSecret: svcCfg.clientSecret ?? d.clientSecret,
+    };
+    if (!resolved.projectId || !resolved.clientId || !resolved.clientSecret) {
+      console.error(`[${id}] projectId / clientId / clientSecret のいずれかが未設定 — skip`);
+      skipped++;
+      continue;
+    }
+    const dir = resolve(process.cwd(), spec.repoDir, spec.subDir ?? '.');
+    if (!existsSync(dir)) {
+      console.error(`[${id}] repo dir 不在: ${dir} — skip`);
+      skipped++;
+      continue;
+    }
+    const target = join(dir, '.env.secrets');
+    if (existsSync(target) && !force) {
+      console.warn(`[${id}] ${target} は既に存在 — skip (--force で上書き)`);
+      skipped++;
+      continue;
+    }
+    writeFileSync(target, formatEnvSecrets({
+      projectId: resolved.projectId,
+      siteUrl: resolved.siteUrl,
+      environment: resolved.environment,
+      clientId: resolved.clientId,
+      clientSecret: resolved.clientSecret,
+    }), 'utf-8');
+    console.log(`[${id}] ${target} 書込 (projectId=${resolved.projectId.slice(0, 8)}...)`);
+    written++;
+  }
+
+  console.log(`\n[setup-batch] 完了: 書込=${written}, skip=${skipped}`);
+  if (written > 0) {
+    console.log('次のステップ: `npm run infisical -- test --all` で接続確認、 `gen --all` で .env 生成');
+  }
 }
 
 function main(): void {
@@ -60,6 +236,12 @@ function main(): void {
     console.error(`unknown op: ${op}`);
     printUsage();
     process.exit(2);
+  }
+
+  // setup-batch は npm script ではなく .env.secrets を直接書く独立経路。
+  if (op === 'setup-batch') {
+    runSetupBatch(argv.slice(1));
+    return;
   }
 
   // op が get/set のときは次の引数を key/value として握って渡す。
