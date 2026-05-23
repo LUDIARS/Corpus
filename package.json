@@ -7,6 +7,7 @@
   "scripts": {
     "predev": "npm run build:web",
     "dev": "tsx watch --env-file-if-exists=.env.secrets --env-file-if-exists=.env server/bootstrap.ts",
+    "dev:debug": "tsx watch --env-file-if-exists=.env.secrets --env-file-if-exists=.env server/bootstrap.ts --no-cernere --port=5187",
     "prestart": "npm run build:web",
     "start": "tsx --env-file-if-exists=.env.secrets --env-file-if-exists=.env server/bootstrap.ts",
     "build:web": "esbuild public/src/app.ts --bundle --outfile=public/app.js --target=es2020 --sourcemap --format=esm",
