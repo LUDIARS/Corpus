@@ -35,7 +35,7 @@ npm run dev                 # Corpus server を子プロセス起動 + Electron 
 
 Corpus は LUDIARS hub なので、 開発時は他サービス (Cernere / Bibliotheca /
 Aedilis 等) を並列起動して manifest を probe するのが一般的。 そのための
-2 つの dev utility が `scripts/` にある。
+launch utility が `scripts/` にある。
 
 ### サービス一括起動: `npm run launch`
 
@@ -51,60 +51,16 @@ npm run launch -- --all                  # registry の全サービス
 1 サービスがクラッシュしても他は継続。 サービス registry は
 `scripts/services.ts` (= `infra/PORT-MAP.md` + `server/hub/discovery.ts` と同期)。
 
-### Infisical 一括操作: `npm run infisical`
+### Infisical 一括操作
+
+LUDIARS repo に集約 (`../LUDIARS/scripts/infisical.mjs`)。 詳細は
+`LUDIARS/scripts/README.md` を参照。
 
 ```sh
-npm run infisical -- gen bibliotheca aedilis      # 2 サービスで env:gen
-npm run infisical -- initialize --all             # env-cli を持つ全サービスで初期値登録
-npm run infisical -- list memoria                 # Memoria の env 一覧
-npm run infisical -- set FOO=bar bibliotheca      # 1 key 設定 (--代替で渡す)
-```
-
-op は `setup / test / gen / list / get / set / initialize` (各サービスの
-`env:<op>` script に対応)。 対話 prompt を取り違えないよう直列実行。
-
-### Infisical 初期設定の一括化: `setup-batch`
-
-`env:setup` の対話 5 項目 (siteUrl / projectId / environment / clientId /
-clientSecret) のうち **projectId だけが per-service**、 他は通常 1 つの
-machine identity を全サービスで共有する。 これを 1 config + 1 コマンドで
-全サービスに反映する `setup-batch` がある。
-
-```sh
-# 1) テンプレを生成 (.infisical-batch.json — gitignored)
+cd ../LUDIARS
 npm run infisical -- setup-batch --init
-
-# 2) 各 service.projectId と defaults.client* を埋める
-#    (clientId / clientSecret は 1 machine identity を共有想定)
-
-# 3) 一括書込
 npm run infisical -- setup-batch --all
-# → 各サービスの .env.secrets を直接生成 (env-cli の対話を bypass)
-
-# 4) 接続確認
-npm run infisical -- test --all
-```
-
-`.env.secrets` が既に存在するサービスは **skip** (上書きしたい場合は
-`--force`)。 `--force` 無しなら誤上書きで既存設定を壊さない。
-
-`.infisical-batch.json` の構造:
-
-```json
-{
-  "defaults": {
-    "siteUrl": "https://app.infisical.com",
-    "environment": "dev",
-    "clientId": "<shared>",
-    "clientSecret": "<shared>"
-  },
-  "services": {
-    "cernere":     { "projectId": "abc..." },
-    "bibliotheca": { "projectId": "def..." },
-    "aedilis":     { "projectId": "ghi..." }
-    // service 側で defaults を override 可
-  }
-}
+npm run infisical -- gen --all
 ```
 
 ## プラグインパック
