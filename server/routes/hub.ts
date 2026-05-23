@@ -100,6 +100,7 @@ export function makeHubRouter(
     const token = await tokenProvider.getDownstreamToken(getUserToken(c), {
       service: conn.id,
       projectKey: manifest.cernereProjectKey ?? conn.id,
+      baseUrl: conn.baseUrl,
     });
     const method = c.req.method;
     const headers: Record<string, string> = {};

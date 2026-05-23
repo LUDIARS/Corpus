@@ -17,6 +17,11 @@ export interface DownstreamTarget {
   service: string;
   /** Cernere managed project key (マニフェスト cernereProjectKey 由来)。 */
   projectKey: string;
+  /**
+   * 参照先サービスの baseUrl。 Cernere に `hub_url` として渡して PASETO の aud
+   * claim を組み立てる (Issue #91 Phase 1)。 空文字なら旧 HS256 経路に fallback。
+   */
+  baseUrl: string;
 }
 
 export interface TokenProvider {
@@ -59,18 +64,23 @@ export class CernereProjectTokenProvider implements TokenProvider {
     target: DownstreamTarget,
   ): Promise<string | null> {
     if (!incomingToken) return null;
-    const key = `${tokenFingerprint(incomingToken)}:${target.projectKey}`;
+    const key = `${tokenFingerprint(incomingToken)}:${target.projectKey}:${target.baseUrl}`;
     const cached = this.cache.get(key);
     // 30s の余裕を見て期限内ならキャッシュ利用
     if (cached && cached.expiresAt > Date.now() + 30_000) return cached.token;
     try {
+      const reqBody: Record<string, string> = { project_key: target.projectKey };
+      // hub_url を渡すと Cernere は PASETO v4 を mint する (Issue #91 Phase 1)。
+      // 渡さないと HS256 fallback で、 PASETO 専用サービス (Bibliotheca 等) が
+      // トークンを受け付けない。 baseUrl 空のコネクタは旧経路を踏む。
+      if (target.baseUrl) reqBody.hub_url = target.baseUrl;
       const res = await fetch(`${this.cernereBaseUrl}/api/auth/project-token`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${incomingToken}`,
         },
-        body: JSON.stringify({ project_key: target.projectKey }),
+        body: JSON.stringify(reqBody),
       });
       if (!res.ok) return null;
       const body = (await res.json()) as {
