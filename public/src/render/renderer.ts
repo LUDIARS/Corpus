@@ -7,12 +7,14 @@ import type {
   ActionDescriptor,
   ComponentDescriptor,
   FormField,
+  GridComponent,
   ListComponent,
   ListItemSpec,
   ModalComponent,
   PaginationSpec,
   PanelDescriptor,
   RenderContext,
+  StackComponent,
   TableComponent,
 } from './types.ts';
 
@@ -661,6 +663,37 @@ function renderCustom(comp: ComponentDescriptor & { type: 'custom' }): HTMLEleme
   return host;
 }
 
+// ── レイアウター (grid / stack) ────────────────────────────────────────────
+//
+// 業務 (descriptor) と並べ方を分離する設計の一環. CSS variables を inline で
+// 渡し、 breakpoint (640px) で PC ↔ スマホを切り替える. media query は
+// style.css 側で 1 度だけ書く (各 component が個別 media query を生やさない).
+
+function renderGrid(comp: GridComponent, ctx: RenderContext): HTMLElement {
+  const root = el('div', 'corpus-grid');
+  root.style.setProperty('--corpus-cols', String(comp.columns));
+  root.style.setProperty('--corpus-mobile-cols', String(comp.mobileColumns ?? 1));
+  if (comp.gap != null) root.style.setProperty('--corpus-gap', `${comp.gap}rem`);
+  for (const child of comp.components) {
+    const node = renderComponent(child, ctx);
+    if (node) root.appendChild(node);
+  }
+  return root;
+}
+
+function renderStack(comp: StackComponent, ctx: RenderContext): HTMLElement {
+  const responsive = comp.responsive ?? true;
+  const root = el('div', `corpus-stack${responsive ? ' responsive' : ''}`);
+  root.style.setProperty('--corpus-direction', comp.direction ?? 'row');
+  if (comp.wrap === false) root.style.setProperty('--corpus-wrap', 'nowrap');
+  if (comp.gap != null) root.style.setProperty('--corpus-gap', `${comp.gap}rem`);
+  for (const child of comp.components) {
+    const node = renderComponent(child, ctx);
+    if (node) root.appendChild(node);
+  }
+  return root;
+}
+
 // ── ディスパッチ ────────────────────────────────────────────────────────────
 
 function renderComponent(
@@ -690,6 +723,10 @@ function renderComponent(
       return renderCustom(comp);
     case 'modal':
       return renderModal(comp, ctx);
+    case 'grid':
+      return renderGrid(comp, ctx);
+    case 'stack':
+      return renderStack(comp, ctx);
     case 'section': {
       const sec = el('div', 'corpus-subsection');
       if (comp.title) sec.appendChild(el('h4', 'corpus-subsection-title', comp.title));

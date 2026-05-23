@@ -305,3 +305,29 @@ button.primary:hover { filter: brightness(1.1); }
 }
 .corpus-modal-close:hover { color: var(--fg); }
 .corpus-modal-body { padding: 0.8rem 0.9rem; max-height: 70vh; overflow: auto; }
+
+/* --- layouter (responsive grid / stack) --- */
+/* breakpoint は Corpus shell と統一して 640px。 column 数は inline CSS variable で
+   個別 component が指定する (--corpus-cols / --corpus-mobile-cols)。 */
+.corpus-grid {
+  display: grid;
+  gap: var(--corpus-gap, 0.6rem);
+  grid-template-columns: repeat(var(--corpus-mobile-cols, 1), 1fr);
+}
+@media (min-width: 640px) {
+  .corpus-grid {
+    grid-template-columns: repeat(var(--corpus-cols, 2), 1fr);
+  }
+}
+
+.corpus-stack {
+  display: flex;
+  gap: var(--corpus-gap, 0.6rem);
+  flex-direction: var(--corpus-direction, row);
+  flex-wrap: var(--corpus-wrap, wrap);
+}
+/* responsive=true: スマホでは縦並びへ強制反転。 PC で direction 復帰。 */
+.corpus-stack.responsive { flex-direction: column; }
+@media (min-width: 640px) {
+  .corpus-stack.responsive { flex-direction: var(--corpus-direction, row); }
+}

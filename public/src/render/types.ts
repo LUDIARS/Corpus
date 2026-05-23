@@ -133,6 +133,42 @@ export interface SectionComponent {
   components: ComponentDescriptor[];
 }
 
+/**
+ * Grid layouter — CSS Grid でレスポンシブな多列レイアウト。
+ * スマホ (< 640px) と PC (>= 640px) で列数を切替.
+ *
+ * 業務 (descriptor) と並べ方 (layouter) を分離する設計の一環。 サービス側は
+ * UI パーツ (list / form / table 等) だけ宣言し、 PC/スマホ向け配置は Corpus が担う.
+ */
+export interface GridComponent {
+  type: 'grid';
+  /** PC (>= 640px) 時の列数。 */
+  columns: number;
+  /** スマホ (< 640px) 時の列数 (既定 1)。 */
+  mobileColumns?: number;
+  /** セル間 gap (rem 単位、 既定 0.6)。 */
+  gap?: number;
+  requires?: Requires;
+  components: ComponentDescriptor[];
+}
+
+/**
+ * Stack layouter — flex で 1 軸に並べる. スマホで自動的に縦並びへ反転 (responsive=既定 true)。
+ */
+export interface StackComponent {
+  type: 'stack';
+  /** PC 時の並び方向 (既定 'row')。 */
+  direction?: 'row' | 'column';
+  /** スマホで自動的に縦並び (= column) へ反転するか (既定 true)。 */
+  responsive?: boolean;
+  /** wrap 可能か (既定 true)。 */
+  wrap?: boolean;
+  /** gap (rem、 既定 0.6)。 */
+  gap?: number;
+  requires?: Requires;
+  components: ComponentDescriptor[];
+}
+
 export interface TabsComponent {
   type: 'tabs';
   requires?: Requires;
@@ -169,6 +205,8 @@ export type ComponentDescriptor =
   | DetailComponent
   | TableComponent
   | SectionComponent
+  | GridComponent
+  | StackComponent
   | TabsComponent
   | StatComponent
   | ActionButtonComponent
