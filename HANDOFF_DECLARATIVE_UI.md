@@ -13,39 +13,47 @@
 | 1 | descriptor JSON Schema + `corpus-renderer` (9 component) | ✅ 完了 (`public/src/render/renderer.ts` 596 行 + vitest 708 行) |
 | 2 | `ManifestPanel` kind union (`corpusApi: 2`) + Corpus が `declarative` panel を内蔵レンダラへ回す | ✅ 完了 (Corpus PR #10 merged) |
 | 3 | **Aedilis pilot** (declarative panel 1 枚) — 表現力ギャップ反映 | ✅ 完了 (§13.9 で descriptor 4 拡張点を反映済) |
-| 4 | **Bibliotheca / Actio を declarative panel 化、 自前 SPA 撤去** | ⚠️ **半分** — corpus.ts は宣言済、 自前 SPA は未撤去 |
+| 4 | **Bibliotheca / Actio を declarative panel 化、 自前 SPA 撤去** | ⚠️ **進行中** — Bibliotheca は β ページ追加済 (PR #5)、 Actio は未着手 |
 
 ## 1. 残作業 (優先度順)
 
 ### 1.1 Bibliotheca の自前 SPA 撤去 (step 4 前半)
 
-**現状**:
-- `Bibliotheca/server/corpus.ts` は `corpusApi: 2 / kind: 'declarative'` で descriptor を返している (Corpus 内蔵レンダラ向け)
-- 一方で `Bibliotheca/public/app.js` (約 35,000 行) の自前 SPA が並存している
-- Bibliotheca 単体起動でも使えるよう SPA を残す設計 vs 完全撤去の選択
+**現状 (2026-05-23 更新)**:
+- ✅ **declarative β ページ追加済** — `Bibliotheca/public/declarative.html` + `public/src/declarative.ts` + `public/src/corpus-renderer/` (vendor copy)
+- ✅ topbar に「📋 β」 リンクで discoverable
+- 既存 SPA (`public/app.js` 約 35,000 行) は無改変で共存中
+- 取込スコープ: 貸出フォーム / 貸出中一覧 (admin 返却 action) / 自分の貸出一覧
+- 取込外: QR/ISBN スキャナ (camera + zxing → app.ts のまま)、 機材マスタ管理
 
-**やること**:
-1. 単体起動の必要性をユーザに確認。 不要なら撤去
-2. 必要なら最小化 (descriptor が正本、 SPA は薄いラッパー) で残す
-3. スキャナ機能 (QR/ISBN) は宣言で書けないので `custom` kind の component で
-   残す (§13.4 の `custom` component 仕様を参照)
+**次のステップ**:
+1. ブラウザ動作確認 → 表現力ギャップ洗い出し
+2. ギャップを §13.4 descriptor 拡張で埋める (Aedilis pilot と同じパターン)
+3. 既存 SPA をスキャナ専用ページに最小化 → 通常 UI は declarative にシフト
+4. `🏗 β` ラベルを外して正式 UI に格上げ
 
 **参照**:
-- `Bibliotheca/server/corpus.ts` (descriptor 宣言)
-- `Bibliotheca/public/app.js` (撤去対象)
+- `Bibliotheca/public/declarative.html` (新規 β ページ)
+- `Bibliotheca/public/src/declarative.ts` (bootstrap + data() 実装)
+- `Bibliotheca/public/src/corpus-renderer/` (vendor copy — Corpus 同期前提)
+- `Bibliotheca` PR #5 (declarative-loans-panel) — merged
 - `Corpus/DESIGN.md` §13.2 — `script` / `custom` はエスケープハッチ
 
 ### 1.2 Actio の自前 SPA 撤去 (step 4 後半)
 
 **現状**:
 - `Actio/src/corpus.ts` は declarative 宣言済 (205 行)
-- `Actio/dist/src/app.js` などの SPA が残存
-- Actio はタスク管理 UI が比較的複雑。 descriptor で表現できるか確認必要
+- frontend/ は **Vite + React 19** (Bibliotheca と違ってフレームワーク重め)
+- 自前 SPA (frontend/dist/src/app.js) が標準 UI
 
-**やること**:
-1. corpus.ts の descriptor が現行 SPA の機能を網羅しているかレビュー
-2. 不足があれば descriptor 拡張 PR (Corpus 側 §13.4 component 追加 / プロパティ拡張)
-3. SPA 撤去
+**やること** (Bibliotheca PR #5 パターンを移植):
+1. `Actio/frontend/src/corpus-renderer/` に Corpus からの vendor copy を置く
+2. `Actio/frontend/declarative.html` + `frontend/src/declarative.ts` を新規追加
+3. `vite.config.ts` の `build.rollupOptions.input` に declarative.html を加えて multi-entry mode に
+4. React 側 (main.tsx) には触らない (既存 UI 維持)
+5. 表現力ギャップが出たら descriptor 拡張 PR
+
+**descriptor 表現力レビューが先に必要かも**: Actio のタスク管理 UI (drag-drop / dependent select 等) が現行 9 component (list/form/table/modal/grid/stack/...) で書けるか先に検証 → 不足 component は Corpus PR で追加してから移植
 
 ### 1.3 §14 オープン論点を閉じる
 
