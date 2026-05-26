@@ -224,6 +224,8 @@ migration は `CREATE IF NOT EXISTS` + ALTER 後付け方式
 | GET | `/api/hub/modules`          | ロード済モジュール一覧 (frontend が タブ描画) |
 | GET | `/api/hub/connectors`       | コネクタ一覧 + 最新 health |
 | GET | `/api/hub/overview`         | local/multi 区別つきの集約サマリ |
+| GET | `/api/hub/discovery`        | 現在の discovery 設定 + locked フラグ (admin) — §9.3 |
+| PUT | `/api/hub/discovery`        | discovery 設定を runtime に差し替え (admin、 locked なら 423) — §9.3 |
 | ALL | `/api/x/<moduleId>/*`       | 各プラグインモジュールのサブルータ |
 
 ---
@@ -246,8 +248,19 @@ inject してから `index.ts` を読む。 `.env` 直書き / Excubitor inject 
 | `CORPUS_PORT`        | listen port |
 | `CORPUS_DATA`        | SQLite 等のデータディレクトリ |
 | `CORPUS_REMOTE_URL`  | ローカルアプリが叩くサーバサイドアプリ URL (マルチ情報用) |
+| `CORPUS_DISCOVERY_LOCKED` | `1` で起動後の discovery 設定変更を全拒否 (継承先固定化用) — §9.3 |
 
-### 9.3 ポート (暫定、 infra/PORT-MAP.md 登録は実装 PR で)
+### 9.3 起動後の連携先変更 (runtime discovery)
+
+Corpus 本体は **起動時 (env / CLI) と起動後 (API) の両方で** discovery 設定 (mode / localPorts / serverServices / remoteUrl) を切り替えられる。 v0.1 までは boot のみだったが、 ローカルクライアントが「今日はこの hub に繋ぐ」 をユーザ操作で選べるよう v0.2 で runtime API を追加した。
+
+- `GET /api/hub/discovery` — admin 限定。 現在の config と `locked` を返す
+- `PUT /api/hub/discovery` — admin 限定。 body は `DiscoveryConfig` 互換 JSON。 invalid なら 400、 locked なら 423、 成功で新 config と即時 1 回 probe
+- 設定差し替え時、 新しい target に含まれない discovered コネクタは registry から prune する (古い hub が残り続けないため)。 手動 `addConnector` の組み込みコネクタは prune 対象外
+
+**継承先 (VantanHub 等) で固定する場合**: boot env `CORPUS_DISCOVERY_LOCKED=1` または CLI `--lock-discovery` を渡す。 これで `PUT /api/hub/discovery` は 423 Locked を返す。 ユーザに「ここは絶対この hub に繋がる」 を保証したいモデル (= VantanHub) で使う。
+
+### 9.4 ポート (暫定、 infra/PORT-MAP.md 登録は実装 PR で)
 
 - サーバサイドアプリ: `5185` (Memoria 5180 の隣)
 - ローカルアプリ内蔵 server: loopback `17520`
