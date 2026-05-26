@@ -338,7 +338,7 @@ descriptor は `Panel → Section[] → Component[]` の階層。
 }
 ```
 
-### 13.4 ComponentDescriptor — 8 種
+### 13.4 ComponentDescriptor — 9 種
 
 `type` で判別。 共通フィールド: `requires?: "admin"` (admin のみ表示・実行)。
 
@@ -419,6 +419,48 @@ PATCH する (一覧上のインライン編集)。
 { "type": "custom", "tag": "bibliotheca-scanner", "url": "/corpus-ui/scanner.js" }
 ```
 
+**9. `dock`** — ユーザがドラッグ操作で自由レイアウトできるサブパネル容器
+```jsonc
+{ "type": "dock",
+  "layoutId": "ergo-tools",                 // 永続化キー (1 panel 1 つ)
+  "defaultLayout": {                        // 初回 / リセット時に使う既定 layout
+    "kind": "split", "orientation": "horizontal", "ratio": 0.4,
+    "first":  { "kind": "leaf", "panelId": "spawn" },
+    "second": { "kind": "split", "orientation": "vertical", "ratio": 0.5,
+                "first":  { "kind": "leaf", "panelId": "enemy" },
+                "second": { "kind": "tabs", "active": "variable",
+                            "tabs": [ { "panelId": "variable" },
+                                      { "panelId": "visus" } ] } } },
+  "panels": [
+    { "id": "spawn",    "title": "Spawn",    "components": [ /* ComponentDescriptor[] */ ] },
+    { "id": "enemy",    "title": "Enemy",    "components": [ /* ... */ ] },
+    { "id": "variable", "title": "Variable", "components": [ /* ... */ ] },
+    { "id": "visus",    "title": "Visus",    "components": [ /* ... */ ] }
+  ],
+  "floating": true,                         // 既定 true — フローティング群を許可
+  "closable": false                         // 既定 false — leaf を × で消せるか
+}
+```
+
+- **DockLayoutNode** は `leaf` / `split` / `tabs` の discriminated union。 再帰可能
+  - `leaf`: `{ kind: "leaf", panelId: <id> }` — `panels[]` の id を指す
+  - `split`: `{ kind: "split", orientation: "horizontal" | "vertical", ratio: 0..1, first, second }`
+  - `tabs`: `{ kind: "tabs", active: <id>, tabs: [{ panelId: <id>, title?: <override> }] }`
+- 子 panel の `components` は §13.4 1-8 を再帰的に取れる (`dock` の入れ子も可だが
+  推奨しない — 1 dock 1 階層の運用)
+- レイアウト状態の永続化:
+  - 共通: `layoutId` をキーに **localStorage** ("corpus.dock.<layoutId>") へ保存
+  - 任意: サービスが manifest data `dock-layout` を宣言した場合は API 経由
+    (GET=取得 / PUT=保存)。 user 別 / shared 切替はサービス契約に委ねる
+  - 初回または保存無しの場合は `defaultLayout` を使う
+  - 「リセット」 ボタンは常に descriptor が描く (右上 menu。 押すと localStorage を消す)
+- レンダラ実装: `dockview-core` (vanilla TS、 MIT、 toJSON/fromJSON) をラップ。
+  各 leaf に対応する `<div data-corpus-dock-leaf>` の中で再帰レンダラが `components` を描く
+- スコープ外 (v0.1):
+  - DockLayoutNode 内で panel ごとの **専用ツールバー** を宣言する仕組み (将来課題)
+  - panel 間 drag drop でのデータ受け渡し (将来 — まずは独立 panel として並列表示のみ)
+  - 複数 user 間での layout 同期 (`dock-layout` API の用途次第)
+
 ### 13.5 データ束縛
 
 - component の `dataSource` / `optionsSource` / form の `submit.dataId` /
@@ -471,7 +513,7 @@ PATCH する (一覧上のインライン編集)。
 
 | 段階 | 内容 |
 |---|---|
-| 1 | descriptor の JSON Schema 確定 + `corpus-renderer` パッケージ (8 component) |
+| 1 | descriptor の JSON Schema 確定 + `corpus-renderer` パッケージ (9 component) |
 | 2 | `ManifestPanel` を kind 判別 union に。 Corpus frontend が `declarative` panel を内蔵レンダラへ回す。 `script` は現行経路を維持 |
 | 3 | **Aedilis を pilot** — declarative panel を 1 枚出す (新しく小さい)。 descriptor 表現力を実地検証 |
 | 4 | Bibliotheca (スキャナは `custom`) / Actio を declarative panel 化。 自前 SPA を撤去 |
