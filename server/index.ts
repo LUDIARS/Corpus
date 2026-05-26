@@ -230,6 +230,17 @@ async function main(): Promise<void> {
   app.get('/app.js', (c) => serveFromPublic(c, 'app.js'));
   app.get('/app.js.map', (c) => serveFromPublic(c, 'app.js.map'));
   app.get('/style.css', (c) => serveFromPublic(c, 'style.css'));
+  // vendor/ — 3rd-party assets (dockview.css 等)。 1 階層のみ許可.
+  app.get('/vendor/:file', (c) => {
+    const file = c.req.param('file');
+    if (!file || file.includes('..') || !/^[a-zA-Z0-9._-]+$/.test(file)) {
+      return c.json({ error: 'bad_path' }, 400);
+    }
+    const full = join(PUBLIC_DIR, 'vendor', file);
+    if (!existsSync(full)) return c.json({ error: 'not_found' }, 404);
+    const type = CONTENT_TYPES[extname(file)] ?? 'application/octet-stream';
+    return c.body(readFileSync(full), 200, { 'content-type': type });
+  });
   app.notFound((c) => {
     const url = new URL(c.req.url);
     if (url.pathname.startsWith('/api/')) return c.json({ error: 'not_found' }, 404);

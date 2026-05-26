@@ -199,6 +199,56 @@ export interface CustomComponent {
   requires?: Requires;
 }
 
+/**
+ * Dock layouter — ユーザがドラッグ操作で自由レイアウトできるサブパネル容器
+ * (Corpus DESIGN.md §13.4-9)。 dockview-core を内蔵レンダラがラップする。
+ *
+ * `panels[]` の各 entry が 1 つの dock leaf に対応し、 中で §13.4 1-8 を再帰描画する。
+ * `defaultLayout` は初回 / リセット時に使う既定配置 (split / tabs / leaf の再帰木)。
+ * 編集後の layout は dockview-core の toJSON 形式で `layoutId` をキーに localStorage
+ * へ保存する (キー名: "corpus.dock.<layoutId>")。
+ */
+export interface DockComponent {
+  type: 'dock';
+  layoutId: string;
+  panels: DockPanelDef[];
+  defaultLayout: DockLayoutNode;
+  /** フローティング群を許可するか (既定 true)。 */
+  floating?: boolean;
+  /** leaf を × で消せるか (既定 false)。 */
+  closable?: boolean;
+  requires?: Requires;
+}
+
+export interface DockPanelDef {
+  id: string;
+  title: string;
+  components: ComponentDescriptor[];
+}
+
+export type DockLayoutNode = DockLeafNode | DockSplitNode | DockTabsNode;
+
+export interface DockLeafNode {
+  kind: 'leaf';
+  panelId: string;
+}
+
+export interface DockSplitNode {
+  kind: 'split';
+  orientation: 'horizontal' | 'vertical';
+  /** first 側の比率 (0..1)。 second は 1-ratio。 */
+  ratio: number;
+  first: DockLayoutNode;
+  second: DockLayoutNode;
+}
+
+export interface DockTabsNode {
+  kind: 'tabs';
+  /** 既定でアクティブにする panelId。 */
+  active: string;
+  tabs: { panelId: string; title?: string }[];
+}
+
 export type ComponentDescriptor =
   | ListComponent
   | FormComponent
@@ -211,7 +261,8 @@ export type ComponentDescriptor =
   | StatComponent
   | ActionButtonComponent
   | ModalComponent
-  | CustomComponent;
+  | CustomComponent
+  | DockComponent;
 
 export interface SectionDescriptor {
   title?: string;
