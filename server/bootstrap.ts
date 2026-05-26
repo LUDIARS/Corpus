@@ -49,6 +49,9 @@ const ARG_SPECS: ArgSpec[] = [
   { flag: '--probe',       env: 'CORPUS_LOCAL_PROBE_PORTS',   takesValue: true },
   { flag: '--plugin-dir',  env: 'CORPUS_PLUGIN_DIR',          takesValue: true },
   { flag: '--public-url',  env: 'CORPUS_PUBLIC_URL',          takesValue: true },
+  // 継承先 (VantanHub 等) が「連携先は絶対固定」 にするための boot flag。
+  // /api/hub/discovery PUT が 423 Locked を返すようになる。
+  { flag: '--lock-discovery', env: 'CORPUS_DISCOVERY_LOCKED', takesValue: false, valueOnSet: '1' },
 ];
 
 function parseArgsToEnv(argv: readonly string[]): void {

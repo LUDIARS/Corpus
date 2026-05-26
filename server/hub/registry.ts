@@ -72,6 +72,33 @@ export class HubRegistry {
     return this.discovered.get(baseUrl.replace(/\/+$/, ''));
   }
 
+  /**
+   * 指定 baseUrl の discovered コネクタを 1 つ削除する。 戻り値は実際に
+   * 削除したかどうか。 runtime に discovery 設定を差し替えたときの掃除用。
+   */
+  removeDiscovered(baseUrl: string): boolean {
+    return this.discovered.delete(baseUrl.replace(/\/+$/, ''));
+  }
+
+  /**
+   * `keepBaseUrls` に含まれない discovered コネクタを全部削除する (set 差分)。
+   * baseUrl はキャッシュ前に正規化 (末尾 / 除去) してから比較する。
+   * runtime に discovery config を差し替えたとき、 旧 target 群を一掃する
+   * ために使う。 削除したコネクタの id 配列を返す。
+   */
+  pruneDiscoveredExcept(keepBaseUrls: ReadonlySet<string>): string[] {
+    const normalized = new Set<string>();
+    for (const u of keepBaseUrls) normalized.add(u.replace(/\/+$/, ''));
+    const removed: string[] = [];
+    for (const [baseUrl, conn] of this.discovered.entries()) {
+      if (!normalized.has(baseUrl)) {
+        removed.push(conn.id);
+        this.discovered.delete(baseUrl);
+      }
+    }
+    return removed;
+  }
+
   /** 手動登録 + discovery のコネクタを全部返す。 */
   listConnectors(): ServiceConnector[] {
     return [...this.connectors.values(), ...this.discovered.values()];

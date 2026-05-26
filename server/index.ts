@@ -155,7 +155,19 @@ async function main(): Promise<void> {
   // /api/* は health を除き Cernere 認証必須
   app.use('/api/*', requireAuth);
   app.route('/api/me', makeMeRouter(db));
-  app.route('/api/hub', makeHubRouter(registry, db, tokenProvider));
+  // discovery loop は wiring の中で動的に差し替え可 — controller を hub router
+  // に渡して runtime mutation API を有効化する (spec/feature/runtime-discovery.md)。
+  // boot 時 `CORPUS_DISCOVERY_LOCKED=1` (継承先 VantanHub 等が固定したい場合) で
+  // 設定変更を 423 にロックできる。
+  const discoveryLocked =
+    String(process.env.CORPUS_DISCOVERY_LOCKED ?? '').trim() === '1';
+  const discoveryController = startDiscoveryLoop(registry, discoveryCfg, {
+    locked: discoveryLocked,
+  });
+  app.route(
+    '/api/hub',
+    makeHubRouter({ registry, db, tokenProvider, discoveryController }),
+  );
   // プラグインモジュールの API を /api/x/<moduleId> に mount
   registry.mountRoutes(app);
 
@@ -237,7 +249,7 @@ async function main(): Promise<void> {
   });
 
   startHealthLoop(registry, db);
-  startDiscoveryLoop(registry, discoveryCfg);
+  // discovery loop は上で controller 経由で start 済 — ここでは何もしない。
 }
 
 void main();

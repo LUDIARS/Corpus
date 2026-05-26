@@ -11,6 +11,10 @@ import { buildOverview } from '../hub/aggregate.ts';
 import type { HubRegistry } from '../hub/registry.ts';
 import type { ConnectorInfo } from '../hub/types.ts';
 import type { TokenProvider } from '../hub/tokens.ts';
+import {
+  type DiscoveryController,
+  normalizeDiscoveryConfig,
+} from '../hub/discovery.ts';
 
 interface HealthRow {
   connector_id: string;
@@ -19,11 +23,40 @@ interface HealthRow {
   checked_at: number;
 }
 
+export interface HubRouterDeps {
+  registry: HubRegistry;
+  db: CorpusDb;
+  tokenProvider: TokenProvider;
+  /** runtime に discovery 設定を読む/差し替える窓口。 spec/feature/runtime-discovery.md */
+  discoveryController: DiscoveryController;
+}
+
+export function makeHubRouter(deps: HubRouterDeps): Hono;
+/**
+ * @deprecated 4-引数の旧シグネチャは互換維持のため残す。 新規呼び出しは
+ *  `{ registry, db, tokenProvider, discoveryController }` 形式の deps オブジェクト
+ *  経由で。 旧形式は discovery API を持たない (routes が登録されない)。
+ */
 export function makeHubRouter(
   registry: HubRegistry,
   db: CorpusDb,
   tokenProvider: TokenProvider,
+): Hono;
+export function makeHubRouter(
+  arg: HubRouterDeps | HubRegistry,
+  dbArg?: CorpusDb,
+  tokenProviderArg?: TokenProvider,
 ): Hono {
+  const deps: HubRouterDeps =
+    'registry' in arg
+      ? arg
+      : {
+          registry: arg,
+          db: dbArg!,
+          tokenProvider: tokenProviderArg!,
+          discoveryController: null as unknown as DiscoveryController,
+        };
+  const { registry, db, tokenProvider, discoveryController } = deps;
   const r = new Hono();
 
   // frontend shell がタブを描くためのモジュール一覧
@@ -160,6 +193,52 @@ export function makeHubRouter(
       return c.json({ error: 'mapping_not_found' }, 404);
     }
     return c.json({ ok: true });
+  });
+
+  // discovery (連携先) を runtime に読む / 差し替える — spec/feature/runtime-discovery.md
+  //
+  //  - GET  /discovery        現在の config + locked + 候補一覧 (mode/scope)
+  //  - PUT  /discovery        config 差し替え。 locked のときは 423、 不正 body は 400
+  //
+  // 認証なしユーザに連携先を露出しないよう admin only。 4-引数の旧シグネチャで
+  // 作られた router には controller が無いので 503 にする (= 旧呼び出し互換)。
+  r.get('/discovery', requireAdmin, (c) => {
+    if (!discoveryController) {
+      return c.json({ error: 'discovery_controller_unavailable' }, 503);
+    }
+    return c.json({
+      config: discoveryController.getConfig(),
+      locked: discoveryController.isLocked(),
+    });
+  });
+  r.put('/discovery', requireAdmin, async (c) => {
+    if (!discoveryController) {
+      return c.json({ error: 'discovery_controller_unavailable' }, 503);
+    }
+    if (discoveryController.isLocked()) {
+      return c.json(
+        { error: 'discovery_locked', detail: 'this Corpus pins discovery at boot' },
+        423,
+      );
+    }
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid_json' }, 400);
+    }
+    let next;
+    try {
+      next = normalizeDiscoveryConfig(body);
+    } catch (e) {
+      return c.json({ error: 'invalid_config', detail: (e as Error).message }, 400);
+    }
+    try {
+      await discoveryController.setConfig(next);
+    } catch (e) {
+      return c.json({ error: 'setConfig_failed', detail: (e as Error).message }, 500);
+    }
+    return c.json({ ok: true, config: discoveryController.getConfig() });
   });
 
   return r;
