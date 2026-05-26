@@ -10,8 +10,9 @@
     "dev:debug": "tsx watch --env-file-if-exists=.env.secrets --env-file-if-exists=.env server/bootstrap.ts --no-cernere --port=5187",
     "prestart": "npm run build:web",
     "start": "tsx --env-file-if-exists=.env.secrets --env-file-if-exists=.env server/bootstrap.ts",
-    "build:web": "esbuild public/src/app.ts --bundle --outfile=public/app.js --target=es2020 --sourcemap --format=esm",
-    "watch:web": "esbuild public/src/app.ts --bundle --outfile=public/app.js --target=es2020 --sourcemap --format=esm --watch",
+    "vendor:css": "node scripts/copy-vendor-css.mjs",
+    "build:web": "npm run vendor:css && esbuild public/src/app.ts --bundle --outfile=public/app.js --target=es2020 --sourcemap --format=esm",
+    "watch:web": "npm run vendor:css && esbuild public/src/app.ts --bundle --outfile=public/app.js --target=es2020 --sourcemap --format=esm --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.frontend.json",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -21,6 +22,7 @@
   "dependencies": {
     "@hono/node-server": "^1.13.7",
     "better-sqlite3": "^11.3.0",
+    "dockview-core": "^6.6.0",
     "hono": "^4.6.10",
     "tsx": "^4.21.0"
   },

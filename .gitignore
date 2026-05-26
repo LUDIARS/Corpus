@@ -6,6 +6,7 @@ data/
 .env.local
 public/app.js
 public/app.js.map
+public/vendor/
 desktop/out/
 desktop/dist/
 *.tsbuildinfo

@@ -331,3 +331,37 @@ button.primary:hover { filter: brightness(1.1); }
 @media (min-width: 640px) {
   .corpus-stack.responsive { flex-direction: var(--corpus-direction, row); }
 }
+
+/* ── dock (DESIGN.md §13.4-9) ──────────────────────────────────────── */
+.corpus-dock {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  /* parent が 0 高さでも 480px は確保. 用途特化 hub 側で必要なら上書き. */
+  min-height: 480px;
+  height: 100%;
+  border: 1px solid var(--bg-3);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.corpus-dock-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--bg-3);
+}
+.corpus-dock-host {
+  flex: 1 1 auto;
+  position: relative;
+  min-height: 0;
+  background: var(--bg);
+}
+.corpus-dock-leaf-body {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  padding: 0.5rem;
+  box-sizing: border-box;
+}
