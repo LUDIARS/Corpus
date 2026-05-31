@@ -37,6 +37,7 @@ export interface DiscoveryConfig {
  * `infra/PORT-MAP.md` (`reference_ludiars_port_map`) に従う:
  *   - 8888  Actio backend (shared infra)
  *   - 17330 Concordia backend (loopback only)
+ *   - 17332 Excubitor backend (loopback only、 運用コア。 /.well-known/corpus-service.json を公開)
  *   - 17370 Susurrus core (loopback only)
  *   - 17400 Quaestor backend (loopback only)
  *   - 17501 Bibliotheca (loopback only)
@@ -49,7 +50,7 @@ export interface DiscoveryConfig {
  * `CORPUS_LOCAL_PROBE_PORTS` で完全上書き可。
  */
 const DEFAULT_LOCAL_PROBE_PORTS =
-  '5180,8888,17330,17370,17400,17501,17502,17777';
+  '5180,8888,17330,17332,17370,17400,17501,17502,17777';
 
 /** env から discovery 設定を読む。 */
 export function readDiscoveryConfig(): DiscoveryConfig {
