@@ -10,6 +10,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { cors } from 'hono/cors';
+import { streamSSE } from 'hono/streaming';
 import { serve } from '@hono/node-server';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
@@ -167,6 +168,55 @@ async function main(): Promise<void> {
       return c.json({ error: 'login_proxy_failed', detail: String(e) }, 502);
     }
   });
+
+  // ── §12.3 HMR: UI キー version を polling して shell に push ──────────
+  // サービスの UI キー (descriptor/html) の version (file mtime) が上がったら、
+  // 接続中の shell に SSE で通知 → shell は該当パネルだけ再描画 (Vite HMR 相当)。
+  type SSEWriter = { writeSSE: (m: { data: string; event?: string }) => Promise<void> };
+  const hmrClients = new Set<SSEWriter>();
+  const lastUiVersions = new Map<string, number>();
+
+  // SSE チャネル (認証不要 — key 変更の signal のみ、 データは流さない)。
+  app.get('/ui-hmr', (c) =>
+    streamSSE(c, async (stream) => {
+      hmrClients.add(stream);
+      stream.onAbort(() => {
+        hmrClients.delete(stream);
+      });
+      await stream.writeSSE({ data: 'connected', event: 'hello' });
+      while (!stream.aborted) {
+        await stream.sleep(25_000);
+        await stream.writeSSE({ data: 'ping', event: 'ping' });
+      }
+    }),
+  );
+
+  async function pollUiVersions(): Promise<void> {
+    for (const conn of registry.listConnectors()) {
+      const base = (conn as { baseUrl?: string }).baseUrl;
+      if (!base) continue;
+      let versions: Record<string, number>;
+      try {
+        const r = await fetch(`${base}/api/corpus/ui-versions`);
+        if (!r.ok) continue;
+        versions = (await r.json()) as Record<string, number>;
+      } catch {
+        continue;
+      }
+      for (const [key, version] of Object.entries(versions)) {
+        const mapKey = `${conn.id}:${key}`;
+        const prev = lastUiVersions.get(mapKey);
+        lastUiVersions.set(mapKey, version);
+        if (prev !== undefined && prev !== version) {
+          const data = JSON.stringify({ service: conn.id, key, version });
+          for (const s of hmrClients) void s.writeSSE({ data, event: 'ui-changed' });
+          console.log(`[corpus] HMR: ${conn.id}/${key} → v${version}`);
+        }
+      }
+    }
+  }
+  const hmrTimer = setInterval(() => void pollUiVersions(), 1500);
+  hmrTimer.unref?.();
 
   // 自身のサービスマニフェスト (D6) — 別の Corpus から参照される時に使う。
   // data[] はプラグインが registerData で宣言した分、 panels[] はプラグインの

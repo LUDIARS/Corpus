@@ -35,6 +35,44 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+// ── §12.3 HMR ────────────────────────────────────────────────────────
+// いま main に描いている declarative パネルを覚えておき、 そのサービス/UIキーの
+// version が上がった (Corpus からの SSE) ら、 そのパネルだけ再描画する。
+let currentDecl: { svcId: string; key: string; rerender: () => void } | null = null;
+let hmrSource: EventSource | null = null;
+
+function initHmr(): void {
+  if (hmrSource) return;
+  try {
+    hmrSource = new EventSource('/ui-hmr');
+    hmrSource.addEventListener('ui-changed', (ev) => {
+      try {
+        const { service, key } = JSON.parse((ev as MessageEvent).data) as {
+          service: string;
+          key: string;
+        };
+        if (currentDecl && currentDecl.svcId === service && currentDecl.key === key) {
+          currentDecl.rerender();
+          flashHmr(`↻ ${service}/${key} を更新`);
+        }
+      } catch {
+        /* malformed event は無視 */
+      }
+    });
+  } catch {
+    /* EventSource 不可な環境 */
+  }
+}
+
+function flashHmr(msg: string): void {
+  const t = el('div', 'hmr-toast', msg);
+  t.style.cssText =
+    'position:fixed;right:12px;bottom:12px;background:#238636;color:#fff;' +
+    'padding:.4rem .7rem;border-radius:8px;font-size:.8rem;z-index:9999;opacity:.95';
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 1600);
+}
+
 function showLogin(message: string): void {
   app.innerHTML = '';
   const box = el('div', 'login');
@@ -302,10 +340,20 @@ async function renderDeclarativePanel(
   panel: ServicePanelInfo,
   identity: Identity,
 ): Promise<void> {
+  // HMR (§12.3): このパネルを「いま描いている declarative」として記録。
+  // SSE で version 変化が来たら rerender される。
+  currentDecl = {
+    svcId: svc.id,
+    key: panel.id,
+    rerender: () => void renderDeclarativePanel(container, svc, panel, identity),
+  };
   let descriptor: PanelDescriptor | null = panel.ui ?? null;
   if (!descriptor && panel.uiEndpoint) {
     try {
-      const res = await apiFetchForPanel(`/hub-ui/${svc.id}${panel.uiEndpoint}`);
+      // no-store で uiEndpoint を fresh 取得 (HMR で最新 descriptor を引く)。
+      const res = await apiFetchForPanel(`/hub-ui/${svc.id}${panel.uiEndpoint}`, {
+        cache: 'no-store',
+      });
       descriptor = (await res.json()) as PanelDescriptor;
     } catch (e) {
       container.appendChild(
@@ -390,6 +438,8 @@ function renderShell(
   const buttons = new Map<string, HTMLButtonElement>();
   function activate(id: string): void {
     for (const [tid, btn] of buttons) btn.classList.toggle('active', tid === id);
+    // HMR 追跡をリセット — declarative パネルが描かれたら自身で再設定する。
+    currentDecl = null;
     tabs.find((t) => t.id === id)?.render();
   }
   for (const tab of tabs) {
@@ -399,6 +449,7 @@ function renderShell(
     nav.appendChild(btn);
   }
   activate('__overview');
+  initHmr(); // §12.3 HMR の SSE 購読を開始
 }
 
 async function boot(): Promise<void> {
