@@ -134,6 +134,40 @@ async function main(): Promise<void> {
     }),
   );
 
+  // pre-auth ログイン UI (§11.4) — Cernere の login UI キー (html 直接定義) を
+  // host (Corpus) が中継する。 認証不要 (requireAuth より前)。
+  app.get('/auth/ui', async (c) => {
+    try {
+      const r = await fetch(`${CERNERE_BASE_URL}/api/corpus/ui/login`);
+      if (!r.ok) return c.json({ error: 'login_ui_unavailable' }, 502);
+      return c.json((await r.json()) as Record<string, unknown>);
+    } catch (e) {
+      return c.json({ error: 'login_ui_fetch_failed', detail: String(e) }, 502);
+    }
+  });
+
+  // pre-auth ログイン代行 — host が Cernere /api/auth/login へ中継し accessToken
+  // を返す (ブラウザ→Cernere の CORS 回避 + §11.4 host 代行)。
+  app.post('/auth/login', async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid_json' }, 400);
+    }
+    try {
+      const r = await fetch(`${CERNERE_BASE_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+      return c.json(data, r.ok ? 200 : 401);
+    } catch (e) {
+      return c.json({ error: 'login_proxy_failed', detail: String(e) }, 502);
+    }
+  });
+
   // 自身のサービスマニフェスト (D6) — 別の Corpus から参照される時に使う。
   // data[] はプラグインが registerData で宣言した分、 panels[] はプラグインの
   // パネル (entry は /plugins/<id>/<file> の絶対パス)。
