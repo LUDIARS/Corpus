@@ -554,3 +554,56 @@ PATCH する (一覧上のインライン編集)。
    動的 import。 micro-frontend 化するかは利用実績を見て判断。
 4. コネクタの認可中継 — Bearer 透過中継 vs Corpus が再発行。
 5. モバイルアプリの実装時期。
+
+---
+
+## 15. Corpus = フロント統合 (プレイヤー入口) / UI key レジストリ / Vite 風配信
+
+> 2026-06-08 確定。 LUDIARS の統合は2軸: **フロント統合 = Corpus / バックエンド・
+> インフラ統合 = Excubitor**。 本節は Corpus の役割確定。 詳細設計と実証は
+> `Cernere/spec/feature/corpus-frontend-ui.md` §11-§13 (Cernere を pilot に実機
+> 確認済) を参照。 本節がその Corpus 側 正本サマリ。
+
+### 15.1 3 平面と Corpus の位置
+
+| 平面 | 担う |
+|---|---|
+| レンダラ (ライブラリ) | `corpus-renderer` (descriptor/html を実描画。 Web/デスクトップ/ゲームに埋め込む) |
+| **フロント統合 = エッジ + 集約 (プレイヤー入口)** | **Corpus app** |
+| バックエンド・インフラ統合 (ops/control plane) | Excubitor (監視/制御。 プレイヤー経路外) |
+
+「Corpus = レンダラ」 ではない。 **corpus-renderer がライブラリ**、 **Corpus app が
+それを載せたフロント統合サーバ**。 プレイヤーが叩くのは Corpus *app*。
+
+### 15.2 プレイヤー入口 = Corpus app (確定)
+
+- Corpus app が公開エンドポイント。 web は SPA 配信、 ネイティブ/ゲームは
+  renderer を埋め込んだクライアントが同じ集約 API (`/api/hub/*`) を叩く =
+  全 renderer-host の統合点
+- **ambient SSO の session holder = Corpus app**。 1 度ログイン → 以後トークンを
+  各サービスへ渡し per-service 再ログイン不要 (Excubitor は SSO host にしない)
+- 専用 edge gateway は公開 TLS/マルチ hub 需要が出るまで defer
+
+### 15.3 UI key レジストリ (§13 の一般化)
+
+サービスは UI を **キー → UI 情報** で登録する。 UI 情報は 3 種:
+- `descriptor` — §13.4 の宣言的 PanelDescriptor (既定)
+- `html` — **HTML 直接定義** (特注画面のエスケープハッチ。 `custom` より手前)
+- `custom` — WC mount (JS 必須、 §13.2)
+
+「トップページ」 概念は無く、 各サービスは **feature list + 初回レンダリング**
+(どのキーを最初に描くか) を宣言する。 サービス backend は **UI キーを渡して**
+Corpus に描かせる。 ログインも Corpus が pre-auth で `login` キー (html) を描く。
+
+### 15.4 Vite 風配信 (lazy / cache / HMR)
+
+UI キーを Vite の module 配信になぞらえる:
+- **遅延 + キャッシュ**: UI キーは開いた時だけ fetch、 WebStorage に version/ETag
+  付きで保持 (ネイティブは同梱で描画ネットワーク 0)
+- **HMR**: Corpus が UI キーの version (file mtime) を polling し、 変化を SSE
+  (`/ui-hmr`) で shell に push → **該当パネルだけ再描画** (全画面リロード無し)。
+  サービスの UI ファイルを直すと即ブラウザ反映 = Vite dev server 体験
+- corpus-renderer = framework runtime / descriptor 検証エラーは error overlay
+
+実装の最小実証は Cernere pilot (login=html / account=descriptor + HMR) で稼働
+確認済。 段階 (Vite-P1 lazy+cache / P2 HMR / P3 file-watch) は Cernere spec §12。
