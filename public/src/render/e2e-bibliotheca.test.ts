@@ -108,8 +108,8 @@ describe('Bibliotheca loanPanel — skeleton render', () => {
     // select の選択肢は 2 つ (本 / 機材)
     const select = form!.querySelector<HTMLSelectElement>('select')!;
     expect(select.options.length).toBe(2);
-    expect(select.options[0].value).toBe('book');
-    expect(select.options[1].value).toBe('equipment');
+    expect(select.options[0]!.value).toBe('book');
+    expect(select.options[1]!.value).toBe('equipment');
 
     // date input
     expect(form!.querySelector<HTMLInputElement>('input[type="date"]')).toBeTruthy();
@@ -160,11 +160,11 @@ describe('Bibliotheca loanPanel — data wiring', () => {
     const cards = host.querySelectorAll('.corpus-card');
     // 1 件 (loans-open) + 0 件 (loans-mine、 empty 表示)
     expect(cards).toHaveLength(1);
-    expect(cards[0].querySelector('.corpus-card-title')?.textContent).toBe('吾輩は猫である');
-    expect(cards[0].querySelector('.corpus-card-sub')?.textContent).toMatch(/9784101010014/);
+    expect(cards[0]!.querySelector('.corpus-card-title')?.textContent).toBe('吾輩は猫である');
+    expect(cards[0]!.querySelector('.corpus-card-sub')?.textContent).toMatch(/9784101010014/);
     // datetime filter で yyyy/mm/dd hh:mm 形式が含まれる
-    expect(cards[0].querySelector('.corpus-card-sub')?.textContent).toMatch(/\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}/);
-    expect(cards[0].querySelector('.corpus-card-meta')?.textContent).toBe('田中');
+    expect(cards[0]!.querySelector('.corpus-card-sub')?.textContent).toMatch(/\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}/);
+    expect(cards[0]!.querySelector('.corpus-card-meta')?.textContent).toBe('田中');
   });
 
   it('shows empty messages from both lists when no items', async () => {
@@ -223,8 +223,8 @@ describe('Bibliotheca loanPanel — admin gating', () => {
     btn!.click();
     await flush(8);
     expect(returns).toHaveLength(1);
-    expect(returns[0].method).toBe('POST');
-    expect(returns[0].params).toEqual({ id: 'l1' });
+    expect(returns[0]!.method).toBe('POST');
+    expect(returns[0]!.params).toEqual({ id: 'l1' });
     expect(window.confirm).toHaveBeenCalledWith('返却済みにしますか?');
   });
 });
@@ -244,19 +244,19 @@ describe('Bibliotheca loanPanel — form submit', () => {
     const form = host.querySelector<HTMLFormElement>('.corpus-form')!;
     const select = form.querySelector<HTMLSelectElement>('select')!;
     select.value = 'book';
-    const externalKey = form.querySelectorAll<HTMLInputElement>('input[type="text"]')[0];
+    const externalKey = form.querySelectorAll<HTMLInputElement>('input[type="text"]')[0]!;
     externalKey.value = '9784101010014';
     const date = form.querySelector<HTMLInputElement>('input[type="date"]')!;
     date.value = '2026-06-01';
-    const note = form.querySelectorAll<HTMLInputElement>('input[type="text"]')[1];
+    const note = form.querySelectorAll<HTMLInputElement>('input[type="text"]')[1]!;
     note.value = '研修用';
 
     form.requestSubmit();
     await flush(10);
 
     expect(submits).toHaveLength(1);
-    expect(submits[0].method).toBe('POST');
-    const body = submits[0].body as Record<string, string>;
+    expect(submits[0]!.method).toBe('POST');
+    const body = submits[0]!.body as Record<string, string>;
     expect(body.source).toBe('book');
     expect(body.external_key).toBe('9784101010014');
     expect(body.due_at).toBe('2026-06-01');

@@ -119,7 +119,7 @@ describe('grid layouter', () => {
     await flush();
     const stats = host.querySelectorAll('.corpus-stat-label');
     expect(stats).toHaveLength(1);
-    expect(stats[0].textContent).toBe('public');
+    expect(stats[0]!.textContent).toBe('public');
   });
 });
 
@@ -243,7 +243,7 @@ describe('nested layouters', () => {
     const stacks = grid.querySelectorAll('.corpus-stack');
     expect(stacks).toHaveLength(1);
     // stack 内に stat 2 つ
-    expect(stacks[0].querySelectorAll('.corpus-stat')).toHaveLength(2);
+    expect(stacks[0]!.querySelectorAll('.corpus-stat')).toHaveLength(2);
     // grid 直下の stat (B) も別途
     const labels = Array.from(grid.querySelectorAll('.corpus-stat-label')).map((n) => n.textContent);
     expect(labels).toEqual(['A1', 'A2', 'B']);
