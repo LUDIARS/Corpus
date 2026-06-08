@@ -15,6 +15,7 @@ import { serve } from '@hono/node-server';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 import { openDb } from './db.ts';
 import { requireAuth, startAuth } from './auth.ts';
@@ -296,7 +297,14 @@ async function main(): Promise<void> {
     if (!res.ok) return c.json({ error: 'ui_unavailable' }, 404);
     const body = Buffer.from(await res.arrayBuffer());
     const type = CONTENT_TYPES[extname(rest)] ?? 'application/octet-stream';
-    return c.body(body, 200, { 'content-type': type });
+    // §15.4 Vite-P1: content hash を ETag にして条件付き取得を許す。
+    // クライアントは ETag を WebStorage に保持し、 If-None-Match で再検証 → 304 で再利用。
+    // 上流サービスが ETag を返さなくても Corpus 側で内容から算出する。
+    const etag = `"${createHash('sha1').update(body).digest('base64url')}"`;
+    if (c.req.header('if-none-match') === etag) {
+      return c.body(null, 304, { etag });
+    }
+    return c.body(body, 200, { 'content-type': type, etag });
   });
 
   // frontend shell — PUBLIC_DIR から直接配信 (cwd 非依存)

@@ -21,6 +21,7 @@ import type {
 } from './types.ts';
 import { renderPanel } from './render/renderer.ts';
 import type { PanelDescriptor, RenderContext } from './render/types.ts';
+import { readUiCache, writeUiCache } from './render/ui-cache.ts';
 
 const app = document.getElementById('app') as HTMLElement;
 
@@ -349,17 +350,39 @@ async function renderDeclarativePanel(
   };
   let descriptor: PanelDescriptor | null = panel.ui ?? null;
   if (!descriptor && panel.uiEndpoint) {
+    // §15.4 Vite-P1: WebStorage キャッシュ + ETag 条件付き取得。
+    // 開いた時だけ fetch (= 遅延)、 2 回目以降は If-None-Match で再検証して
+    // 304 ならキャッシュを再利用 (本文転送 0)。 HMR の rerender 時は内容が変わり
+    // ETag も変わるので 200 で最新 descriptor を引き直す。
+    const cached = readUiCache(svc.id, panel.id);
     try {
-      // no-store で uiEndpoint を fresh 取得 (HMR で最新 descriptor を引く)。
+      const headers: Record<string, string> = {};
+      if (cached) headers['if-none-match'] = cached.etag;
+      // no-cache: ブラウザ HTTP cache を介さず必ずサーバへ再検証させ、 304 を JS に通す。
       const res = await apiFetchForPanel(`/hub-ui/${svc.id}${panel.uiEndpoint}`, {
-        cache: 'no-store',
+        cache: 'no-cache',
+        headers,
       });
-      descriptor = (await res.json()) as PanelDescriptor;
+      if (res.status === 304 && cached) {
+        descriptor = cached.descriptor;
+      } else if (res.ok) {
+        descriptor = (await res.json()) as PanelDescriptor;
+        const etag = res.headers.get('etag');
+        if (etag) writeUiCache(svc.id, panel.id, { etag, descriptor });
+      } else if (cached) {
+        descriptor = cached.descriptor; // サーバ不調でもキャッシュで描画継続
+      } else {
+        throw new Error(`status ${res.status}`);
+      }
     } catch (e) {
-      container.appendChild(
-        el('p', 'error', `UI descriptor の取得に失敗しました: ${String(e)}`),
-      );
-      return;
+      if (cached) {
+        descriptor = cached.descriptor; // ネットワーク不通 → キャッシュ fallback
+      } else {
+        container.appendChild(
+          el('p', 'error', `UI descriptor の取得に失敗しました: ${String(e)}`),
+        );
+        return;
+      }
     }
   }
   if (!descriptor) {

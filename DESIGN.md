@@ -607,3 +607,17 @@ UI キーを Vite の module 配信になぞらえる:
 
 実装の最小実証は Cernere pilot (login=html / account=descriptor + HMR) で稼働
 確認済。 段階 (Vite-P1 lazy+cache / P2 HMR / P3 file-watch) は Cernere spec §12。
+
+#### Vite-P1 (lazy + cache + ETag) — 実装済
+
+- **遅延**: declarative パネルはタブを開いた時だけ `uiEndpoint` を取得する
+  (`renderServicePanel` → `renderDeclarativePanel`、 既に panel 単位の遅延描画)。
+- **WebStorage キャッシュ + ETag**:
+  - サーバ `/hub-ui/:service/*` proxy が本文の content hash を `ETag` として付与し、
+    `If-None-Match` 一致なら `304` を返す (上流サービスが ETag 非対応でも Corpus が算出)。
+  - クライアント `render/ui-cache.ts` が `{etag, descriptor}` を localStorage
+    (`corpus.ui.<service>.<key>`) に保持。 2 回目以降は `If-None-Match` 付きで
+    再検証し、 `304` ならキャッシュ再利用 (本文転送 0)。 サーバ不調 / オフライン時も
+    キャッシュ descriptor で描画継続。
+  - P2 HMR で内容が変わると ETag も変わるため、 rerender 時に `200` で最新を引き直す
+    (version は HMR の SSE が、 内容妥当性は ETag が担保)。
