@@ -32,6 +32,11 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+/** ログイン代行 (/auth/login) 成功時に受け取った user accessToken を保持する。 */
+export function setToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
 export class AuthError extends Error {
   constructor() {
     super('unauthorized');
