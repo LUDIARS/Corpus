@@ -7,7 +7,7 @@
 //
 // ドメイン UI は一切持たない。 学校等の機能はプラグインの panel.js 側。
 
-import { apiFetch, apiJson, AuthError, clearToken, getToken, loginRedirect } from './api.ts';
+import { apiFetch, apiJson, AuthError, clearToken, getToken, loginRedirect, setToken } from './api.ts';
 import type {
   HubOverview,
   Identity,
@@ -21,6 +21,7 @@ import type {
 } from './types.ts';
 import { renderPanel } from './render/renderer.ts';
 import type { PanelDescriptor, RenderContext } from './render/types.ts';
+import { readUiCache, writeUiCache } from './render/ui-cache.ts';
 
 const app = document.getElementById('app') as HTMLElement;
 
@@ -35,15 +36,107 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+// ── §12.3 HMR ────────────────────────────────────────────────────────
+// いま main に描いている declarative パネルを覚えておき、 そのサービス/UIキーの
+// version が上がった (Corpus からの SSE) ら、 そのパネルだけ再描画する。
+let currentDecl: { svcId: string; key: string; rerender: () => void } | null = null;
+let hmrSource: EventSource | null = null;
+
+function initHmr(): void {
+  if (hmrSource) return;
+  try {
+    hmrSource = new EventSource('/ui-hmr');
+    hmrSource.addEventListener('ui-changed', (ev) => {
+      try {
+        const { service, key } = JSON.parse((ev as MessageEvent).data) as {
+          service: string;
+          key: string;
+        };
+        if (currentDecl && currentDecl.svcId === service && currentDecl.key === key) {
+          currentDecl.rerender();
+          flashHmr(`↻ ${service}/${key} を更新`);
+        }
+      } catch {
+        /* malformed event は無視 */
+      }
+    });
+  } catch {
+    /* EventSource 不可な環境 */
+  }
+}
+
+function flashHmr(msg: string): void {
+  const t = el('div', 'hmr-toast', msg);
+  t.style.cssText =
+    'position:fixed;right:12px;bottom:12px;background:#238636;color:#fff;' +
+    'padding:.4rem .7rem;border-radius:8px;font-size:.8rem;z-index:9999;opacity:.95';
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 1600);
+}
+
 function showLogin(message: string): void {
   app.innerHTML = '';
   const box = el('div', 'login');
   box.appendChild(el('h1', undefined, 'Corpus'));
-  box.appendChild(el('p', 'muted', message));
-  const btn = el('button', 'primary', 'Cernere でログイン');
-  btn.onclick = () => void loginRedirect();
-  box.appendChild(btn);
+  if (message) box.appendChild(el('p', 'muted', message));
+  const mount = el('div', 'login-ui');
+  box.appendChild(mount);
   app.appendChild(box);
+  void renderLoginUi(mount);
+}
+
+// サービス (Cernere) の login UI キー (html 直接定義、 §11.3) を pre-auth で
+// 取得して挿入し、 form[data-corpus-login] の submit を host (Corpus) が
+// /auth/login へ代行中継する (§11.4)。 取得失敗時は旧リダイレクトに退避。
+async function renderLoginUi(mount: HTMLElement): Promise<void> {
+  try {
+    const res = await fetch('/auth/ui');
+    if (!res.ok) throw new Error(String(res.status));
+    const ui = (await res.json()) as { kind?: string; html?: string };
+    if (ui.kind === 'html' && typeof ui.html === 'string') {
+      mount.innerHTML = ui.html;
+      wireLoginForm(mount);
+      return;
+    }
+    throw new Error('unsupported login ui kind');
+  } catch {
+    const btn = el('button', 'primary', 'Cernere でログイン');
+    btn.onclick = () => void loginRedirect();
+    mount.appendChild(btn);
+  }
+}
+
+function wireLoginForm(mount: HTMLElement): void {
+  const form = mount.querySelector<HTMLFormElement>('form[data-corpus-login]');
+  if (!form) return;
+  const errBox = mount.querySelector<HTMLElement>('[data-corpus-login-error]');
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (errBox) errBox.textContent = '';
+    const data = new FormData(form);
+    void (async () => {
+      try {
+        const res = await fetch('/auth/login', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            email: String(data.get('email') ?? ''),
+            password: String(data.get('password') ?? ''),
+          }),
+        });
+        const body = (await res.json()) as { accessToken?: string; error?: string };
+        if (!res.ok || !body.accessToken) {
+          throw new Error(body.error || `login failed (${res.status})`);
+        }
+        setToken(body.accessToken);
+        location.reload();
+      } catch (err) {
+        if (errBox) {
+          errBox.textContent = err instanceof Error ? err.message : String(err);
+        }
+      }
+    })();
+  });
 }
 
 const HEALTH_LABEL: Record<string, string> = {
@@ -248,16 +341,48 @@ async function renderDeclarativePanel(
   panel: ServicePanelInfo,
   identity: Identity,
 ): Promise<void> {
+  // HMR (§12.3): このパネルを「いま描いている declarative」として記録。
+  // SSE で version 変化が来たら rerender される。
+  currentDecl = {
+    svcId: svc.id,
+    key: panel.id,
+    rerender: () => void renderDeclarativePanel(container, svc, panel, identity),
+  };
   let descriptor: PanelDescriptor | null = panel.ui ?? null;
   if (!descriptor && panel.uiEndpoint) {
+    // §15.4 Vite-P1: WebStorage キャッシュ + ETag 条件付き取得。
+    // 開いた時だけ fetch (= 遅延)、 2 回目以降は If-None-Match で再検証して
+    // 304 ならキャッシュを再利用 (本文転送 0)。 HMR の rerender 時は内容が変わり
+    // ETag も変わるので 200 で最新 descriptor を引き直す。
+    const cached = readUiCache(svc.id, panel.id);
     try {
-      const res = await apiFetchForPanel(`/hub-ui/${svc.id}${panel.uiEndpoint}`);
-      descriptor = (await res.json()) as PanelDescriptor;
+      const headers: Record<string, string> = {};
+      if (cached) headers['if-none-match'] = cached.etag;
+      // no-cache: ブラウザ HTTP cache を介さず必ずサーバへ再検証させ、 304 を JS に通す。
+      const res = await apiFetchForPanel(`/hub-ui/${svc.id}${panel.uiEndpoint}`, {
+        cache: 'no-cache',
+        headers,
+      });
+      if (res.status === 304 && cached) {
+        descriptor = cached.descriptor;
+      } else if (res.ok) {
+        descriptor = (await res.json()) as PanelDescriptor;
+        const etag = res.headers.get('etag');
+        if (etag) writeUiCache(svc.id, panel.id, { etag, descriptor });
+      } else if (cached) {
+        descriptor = cached.descriptor; // サーバ不調でもキャッシュで描画継続
+      } else {
+        throw new Error(`status ${res.status}`);
+      }
     } catch (e) {
-      container.appendChild(
-        el('p', 'error', `UI descriptor の取得に失敗しました: ${String(e)}`),
-      );
-      return;
+      if (cached) {
+        descriptor = cached.descriptor; // ネットワーク不通 → キャッシュ fallback
+      } else {
+        container.appendChild(
+          el('p', 'error', `UI descriptor の取得に失敗しました: ${String(e)}`),
+        );
+        return;
+      }
     }
   }
   if (!descriptor) {
@@ -336,6 +461,8 @@ function renderShell(
   const buttons = new Map<string, HTMLButtonElement>();
   function activate(id: string): void {
     for (const [tid, btn] of buttons) btn.classList.toggle('active', tid === id);
+    // HMR 追跡をリセット — declarative パネルが描かれたら自身で再設定する。
+    currentDecl = null;
     tabs.find((t) => t.id === id)?.render();
   }
   for (const tab of tabs) {
@@ -345,6 +472,7 @@ function renderShell(
     nav.appendChild(btn);
   }
   activate('__overview');
+  initHmr(); // §12.3 HMR の SSE 購読を開始
 }
 
 async function boot(): Promise<void> {
