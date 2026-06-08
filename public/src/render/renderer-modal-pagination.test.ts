@@ -178,7 +178,7 @@ describe('modal component', () => {
     dialog.querySelector<HTMLFormElement>('.corpus-form')!.requestSubmit();
     await flush(8);
     expect(submits).toHaveLength(1);
-    expect((submits[0].body as any).title).toBe('タスク A');
+    expect((submits[0]!.body as any).title).toBe('タスク A');
   });
 });
 
@@ -211,22 +211,22 @@ describe('list pagination', () => {
 
     // page=1 初期 fetch: 2 件描画 + bar 表示
     expect(host.querySelectorAll('.corpus-card')).toHaveLength(2);
-    expect(calls[0].params?.['page']).toBe('1');
+    expect(calls[0]!.params?.['page']).toBe('1');
     const bar = host.querySelector('.corpus-pagination');
     expect(bar).toBeTruthy();
     const buttons = host.querySelectorAll<HTMLButtonElement>('.corpus-pagination .corpus-btn');
-    expect(buttons[0].textContent).toBe('前へ');
-    expect(buttons[0].disabled).toBe(true); // 1 ページ目なので prev disabled
-    expect(buttons[1].textContent).toBe('次へ');
+    expect(buttons[0]!.textContent).toBe('前へ');
+    expect(buttons[0]!.disabled).toBe(true); // 1 ページ目なので prev disabled
+    expect(buttons[1]!.textContent).toBe('次へ');
 
     // 次へ → page=2 fetch
-    buttons[1].click();
+    buttons[1]!.click();
     await flush(8);
     expect(host.querySelectorAll('.corpus-card')).toHaveLength(1);
     expect(calls.at(-1)?.params?.['page']).toBe('2');
     // 1 件しか帰ってこなかった (pageSize=2 未満) ので最終扱い → next disabled
     const buttons2 = host.querySelectorAll<HTMLButtonElement>('.corpus-pagination .corpus-btn');
-    expect(buttons2[1].disabled).toBe(true);
+    expect(buttons2[1]!.disabled).toBe(true);
   });
 
   it('uses totalPath to compute last page', async () => {
@@ -267,8 +267,8 @@ describe('list pagination', () => {
       }] }],
     }, ctx);
     await flush(8);
-    expect(calls[0].params?.['p']).toBe('1');
-    expect(calls[0].params?.['n']).toBe('10');
+    expect(calls[0]!.params?.['p']).toBe('1');
+    expect(calls[0]!.params?.['n']).toBe('10');
   });
 });
 
@@ -291,7 +291,7 @@ describe('table pagination', () => {
     await flush(8);
     expect(host.querySelector('.corpus-pagination')).toBeTruthy();
     expect(host.querySelectorAll('tbody tr')).toHaveLength(2);
-    const next = host.querySelectorAll<HTMLButtonElement>('.corpus-pagination .corpus-btn')[1];
+    const next = host.querySelectorAll<HTMLButtonElement>('.corpus-pagination .corpus-btn')[1]!;
     next.click();
     await flush(8);
     // page=2 が requested

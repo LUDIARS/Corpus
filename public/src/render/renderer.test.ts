@@ -143,9 +143,9 @@ describe('list component', () => {
     await flush();
     const cards = host.querySelectorAll('.corpus-card');
     expect(cards).toHaveLength(2);
-    expect(cards[0].querySelector('.corpus-card-title')?.textContent).toBe('Alice');
-    expect(cards[0].querySelector('.corpus-card-sub')?.textContent).toBe('age=30');
-    expect(cards[1].querySelector('.corpus-card-title')?.textContent).toBe('Bob');
+    expect(cards[0]!.querySelector('.corpus-card-title')?.textContent).toBe('Alice');
+    expect(cards[0]!.querySelector('.corpus-card-sub')?.textContent).toBe('age=30');
+    expect(cards[1]!.querySelector('.corpus-card-title')?.textContent).toBe('Bob');
   });
 
   it('extracts items via itemsPath', async () => {
@@ -228,9 +228,9 @@ describe('list component', () => {
     await flush(5);
 
     expect(updates).toHaveLength(1);
-    expect(updates[0].method).toBe('PATCH');
-    expect(updates[0].params).toEqual({ id: '1' });
-    expect((updates[0].body as any).name).toBe('Alice2');
+    expect(updates[0]!.method).toBe('PATCH');
+    expect(updates[0]!.params).toEqual({ id: '1' });
+    expect((updates[0]!.body as any).name).toBe('Alice2');
     // 成功で reload (items が再 fetch される)
     const itemsCalls = calls.filter((c) => c.dataId === 'items');
     expect(itemsCalls.length).toBeGreaterThanOrEqual(2);
@@ -283,10 +283,10 @@ describe('form component', () => {
     host.querySelector<HTMLFormElement>('.corpus-form')!.requestSubmit();
     await flush(5);
     expect(submits).toHaveLength(1);
-    expect(submits[0].method).toBe('POST');
-    expect((submits[0].body as any).title).toBe('タスク');
-    expect((submits[0].body as any).count).toBe('3');
-    expect((submits[0].body as any).active).toBe('true');
+    expect(submits[0]!.method).toBe('POST');
+    expect((submits[0]!.body as any).title).toBe('タスク');
+    expect((submits[0]!.body as any).count).toBe('3');
+    expect((submits[0]!.body as any).active).toBe('true');
     expect(host.querySelector('.corpus-status')?.textContent).toBe('送れた');
   });
 
@@ -330,8 +330,8 @@ describe('form component', () => {
     await flush();
     const opts = host.querySelectorAll<HTMLOptionElement>('select option');
     expect(opts).toHaveLength(2);
-    expect(opts[0].value).toBe('apple');
-    expect(opts[1].textContent).toBe('みかん');
+    expect(opts[0]!.value).toBe('apple');
+    expect(opts[1]!.textContent).toBe('みかん');
   });
 
   it('dynamic select via optionsSource + optionDetail', async () => {
@@ -363,8 +363,8 @@ describe('form component', () => {
     await flush(5);
     const sel = host.querySelector<HTMLSelectElement>('select');
     expect(sel?.options.length).toBe(2);
-    expect(sel?.options[0].value).toBe('1');
-    expect(sel?.options[0].textContent).toBe('A');
+    expect(sel?.options[0]!.value).toBe('1');
+    expect(sel?.options[0]!.textContent).toBe('A');
     // 初期選択 (=1) の optionDetail が描かれる
     const detail = host.querySelector('.corpus-field-detail');
     expect(detail?.textContent).toMatch(/齢: 10/);
@@ -426,9 +426,9 @@ describe('table component', () => {
     expect(host.querySelectorAll('thead th')).toHaveLength(3); // 2 cols + actions slot
     expect(host.querySelectorAll('tbody tr')).toHaveLength(1);
     const tds = host.querySelectorAll('tbody td');
-    expect(tds[0].textContent).toBe('1');
-    expect(tds[1].textContent).toBe('X');
-    expect(tds[2].querySelector('button')?.textContent).toBe('削除');
+    expect(tds[0]!.textContent).toBe('1');
+    expect(tds[1]!.textContent).toBe('X');
+    expect(tds[2]!.querySelector('button')?.textContent).toBe('削除');
   });
 });
 
@@ -519,7 +519,7 @@ describe('action-button component', () => {
     cb.checked = true;
     cb.dispatchEvent(new Event('change'));
     await flush(5);
-    expect((calls[0].body as any).enabled).toBe(true);
+    expect((calls[0]!.body as any).enabled).toBe(true);
     // 失敗で UI が元に戻る
     expect(cb.checked).toBe(false);
   });
@@ -576,11 +576,11 @@ describe('section / tabs', () => {
     await flush();
     const btns = host.querySelectorAll<HTMLButtonElement>('.corpus-tab-btn');
     expect(btns).toHaveLength(2);
-    expect(btns[0].classList.contains('active')).toBe(true);
+    expect(btns[0]!.classList.contains('active')).toBe(true);
     expect(host.querySelector('.corpus-tab-host .corpus-stat-label')?.textContent).toBe('la');
-    btns[1].click();
-    expect(btns[1].classList.contains('active')).toBe(true);
-    expect(btns[0].classList.contains('active')).toBe(false);
+    btns[1]!.click();
+    expect(btns[1]!.classList.contains('active')).toBe(true);
+    expect(btns[0]!.classList.contains('active')).toBe(false);
     expect(host.querySelector('.corpus-tab-host .corpus-stat-label')?.textContent).toBe('lb');
   });
 });
