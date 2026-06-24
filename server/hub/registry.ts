@@ -26,6 +26,7 @@ import type {
   PanelDescriptor,
   ServiceConnector,
 } from './types.ts';
+import type { TokenProvider } from './tokens.ts';
 
 interface LoadedModule {
   module: CorpusModule;
@@ -146,8 +147,15 @@ export class HubRegistry {
   /**
    * CORPUS_PLUGIN_DIR を走査し、 配下の各サブディレクトリを 1 モジュールとして
    * ロードする。 pluginDir 未指定 / 不在なら何もしない。
+   *
+   * tokenProvider は各モジュールの setup に渡る CorpusContext.tokenProvider に
+   * なる。 plugin proxy が参照先トークンを `/api/hub/data` と同じ経路で解決する
+   * ために必須 (D5)。
    */
-  async loadPluginPacks(pluginDir: string | undefined): Promise<void> {
+  async loadPluginPacks(
+    pluginDir: string | undefined,
+    tokenProvider: TokenProvider,
+  ): Promise<void> {
     if (!pluginDir || !pluginDir.trim()) {
       console.log('[hub] CORPUS_PLUGIN_DIR 未設定 — 本体のみで起動');
       return;
@@ -180,7 +188,7 @@ export class HubRegistry {
         if (mod.id !== name) {
           console.warn(`[hub] モジュール ${name}: module.id="${mod.id}" がディレクトリ名と不一致`);
         }
-        await this.registerModule(mod, dir);
+        await this.registerModule(mod, dir, tokenProvider);
         console.log(`[hub] モジュールロード: ${mod.id} (${mod.title})`);
       } catch (e) {
         const msg = e instanceof Error ? e.stack ?? e.message : String(e);
@@ -192,6 +200,7 @@ export class HubRegistry {
   private async registerModule(
     module: CorpusModule,
     dir: string | null,
+    tokenProvider: TokenProvider,
   ): Promise<void> {
     const entry: LoadedModule = {
       module,
@@ -223,6 +232,7 @@ export class HubRegistry {
       },
       env: (key) => process.env[key],
       logger: makeLogger(`mod:${module.id}`),
+      tokenProvider,
     };
     await module.setup(ctx);
     // setup がここまで throw せず到達したら、 登録物を一括 commit する。
