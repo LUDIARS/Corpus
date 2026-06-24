@@ -96,17 +96,21 @@ async function main(): Promise<void> {
     });
   }
 
-  // hub 機構: 組み込みコネクタ + プラグインパック
-  const registry = new HubRegistry(db);
-  registry.addConnector(new SelfConnector());
-  await registry.loadPluginPacks(process.env.CORPUS_PLUGIN_DIR);
-
-  // discovery (D1) + 認証トークン伝播 (D5)
-  const discoveryCfg = readDiscoveryConfig();
+  // 認証トークン伝播 (D5) — プラグインの setup に渡す CorpusContext.tokenProvider
+  // になるため、 プラグインロードより前に組み立てる。 plugin proxy 経路と
+  // `/api/hub/data` 集約経路で同一インスタンスを共有する (経路依存の auth を作らない)。
   const tokenProvider = makeTokenProvider(
     process.env.CORPUS_TOKEN_MODE,
     CERNERE_BASE_URL,
   );
+
+  // hub 機構: 組み込みコネクタ + プラグインパック
+  const registry = new HubRegistry(db);
+  registry.addConnector(new SelfConnector());
+  await registry.loadPluginPacks(process.env.CORPUS_PLUGIN_DIR, tokenProvider);
+
+  // discovery (D1)
+  const discoveryCfg = readDiscoveryConfig();
 
   const app = new Hono();
   app.use(

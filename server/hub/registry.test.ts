@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { openDb } from '../db.ts';
 import { HubRegistry } from './registry.ts';
+import { PassthroughTokenProvider } from './tokens.ts';
 import type { ConnectorHealth, ServiceConnector } from './types.ts';
 
 function fakeConnector(
@@ -40,7 +41,7 @@ describe('HubRegistry', () => {
 
   it('CORPUS_PLUGIN_DIR 未指定なら loadPluginPacks は no-op', async () => {
     const reg = new HubRegistry(openDb(':memory:'));
-    await reg.loadPluginPacks(undefined);
+    await reg.loadPluginPacks(undefined, new PassthroughTokenProvider());
     expect(reg.listModules()).toEqual([]);
   });
 });

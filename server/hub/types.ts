@@ -7,6 +7,7 @@
 import type { Hono } from 'hono';
 import type { CorpusDb } from '../db.ts';
 import type { CorpusServiceManifest } from './manifest.ts';
+import type { TokenProvider } from './tokens.ts';
 
 /** 接続先サービスの種別。 frontend がローカル印 / マルチ印を出し分ける。 */
 export type ConnectorScope = 'local' | 'multi';
@@ -94,6 +95,14 @@ export interface CorpusContext {
   /** env を読む。 */
   env(key: string): string | undefined;
   readonly logger: Logger;
+  /**
+   * 参照先トークン伝播 (D5)。 plugin proxy がコネクタ越しに leaf サービスを叩く
+   * 前に、 受信ユーザトークンを参照先プロジェクト用トークンへ解決するために使う。
+   * Corpus が起動時に組み立てた単一の TokenProvider インスタンスで、
+   * `/api/hub/data` の集約経路と同一 (= passthrough / cernere-project-token を
+   * 同じ実装・同じキャッシュで尊重する)。
+   */
+  readonly tokenProvider: TokenProvider;
 }
 
 /**

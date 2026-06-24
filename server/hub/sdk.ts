@@ -16,9 +16,15 @@ export { HttpServiceConnector, SelfConnector } from '../connectors/builtin.ts';
 export type { HttpConnectorOptions } from '../connectors/builtin.ts';
 
 // 認証 — プラグインのルートは /api/x/<id> に mount され requireAuth 配下なので、
-// ハンドラ内で getIdentity(c) を使ってよい。
-export { getIdentity, requireAuth, requireAdmin } from '../auth.ts';
+// ハンドラ内で getIdentity(c) / getUserToken(c) を使ってよい。 getUserToken は
+// requireAuth が検証済みで積んだ user accessToken を返す (参照先トークン発行用)。
+export { getIdentity, getUserToken, requireAuth, requireAdmin } from '../auth.ts';
 export type { AuthIdentity } from '../auth.ts';
+
+// 参照先トークン伝播 (D5) — plugin proxy が leaf を叩く前に、 受信ユーザトークンを
+// 参照先プロジェクト用トークンへ解決するために CorpusContext.tokenProvider を使う。
+// /api/hub/data と同じ TokenProvider インスタンス経由 (経路ごとに別実装にしない)。
+export type { TokenProvider, DownstreamTarget } from './tokens.ts';
 
 export type { CorpusDb } from '../db.ts';
 export { cacheDisplayName, getDisplayName } from '../db.ts';
