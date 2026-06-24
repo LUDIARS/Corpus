@@ -29,8 +29,9 @@ export interface ServiceConnector {
   scope: ConnectorScope;
   /**
    * 接続先サービスの baseUrl。 トークン発行時に Cernere に `hub_url` として渡し
-   * PASETO の aud claim を組み立てる (Cernere Issue #91 Phase 1)。 baseUrl 未確定の
-   * コネクタは空文字で OK (= HS256 旧経路に fallback)。
+   * PASETO の aud claim を組み立てる (Cernere Issue #91、 aud 必須)。 baseUrl 未確定の
+   * コネクタは空文字で OK だが、 その場合 project-token は発行されず (HS256 fallback は
+   * 撤去済み)、 コネクタ自身が 503 (未接続) を返す。
    */
   readonly baseUrl: string;
   /** 到達性チェック。 接続先が落ちていても throw せず status:'down' を返すこと。 */

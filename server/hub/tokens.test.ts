@@ -70,4 +70,11 @@ describe('CernereProjectTokenProvider', () => {
     const tp = new CernereProjectTokenProvider('http://127.0.0.1:9');
     expect(await tp.getDownstreamToken('user-token', target)).toBeNull();
   });
+
+  it('baseUrl 空のコネクタは Cernere を叩かず null (hub_url 必須・HS256 撤去済み)', async () => {
+    // cernereBaseUrl を不正値にしておき、 fetch されれば throw/失敗で露見する。
+    const tp = new CernereProjectTokenProvider('http://invalid.invalid:1');
+    const noBase = { service: 'x', projectKey: 'x', baseUrl: '' };
+    expect(await tp.getDownstreamToken('user-token', noBase)).toBeNull();
+  });
 });
