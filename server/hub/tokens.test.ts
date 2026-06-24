@@ -17,12 +17,45 @@ describe('PassthroughTokenProvider', () => {
 });
 
 describe('makeTokenProvider', () => {
-  it('env 値でモードを選ぶ', () => {
-    expect(makeTokenProvider(undefined, 'http://c').mode).toBe('passthrough');
+  it('明示された env 値でモードを選ぶ', () => {
     expect(makeTokenProvider('passthrough', 'http://c').mode).toBe('passthrough');
     expect(makeTokenProvider('cernere-project-token', 'http://c').mode).toBe(
       'cernere-project-token',
     );
+  });
+
+  it('前後空白を許容する', () => {
+    expect(makeTokenProvider('  passthrough  ', 'http://c').mode).toBe(
+      'passthrough',
+    );
+    expect(makeTokenProvider(' cernere-project-token ', 'http://c').mode).toBe(
+      'cernere-project-token',
+    );
+  });
+
+  it('未設定は throw する (無言フォールバック禁止)', () => {
+    expect(() => makeTokenProvider(undefined, 'http://c')).toThrow(
+      /CORPUS_TOKEN_MODE/,
+    );
+    expect(() => makeTokenProvider('', 'http://c')).toThrow(/CORPUS_TOKEN_MODE/);
+    expect(() => makeTokenProvider('   ', 'http://c')).toThrow(
+      /CORPUS_TOKEN_MODE/,
+    );
+  });
+
+  it('dev 無認証経路 (allowImplicitPassthrough) のときだけ未設定で passthrough', () => {
+    expect(
+      makeTokenProvider(undefined, 'http://c', {
+        allowImplicitPassthrough: true,
+      }).mode,
+    ).toBe('passthrough');
+  });
+
+  it('未知の値は dev でも throw する', () => {
+    expect(() => makeTokenProvider('bogus', 'http://c')).toThrow(/不正/);
+    expect(() =>
+      makeTokenProvider('bogus', 'http://c', { allowImplicitPassthrough: true }),
+    ).toThrow(/不正/);
   });
 });
 

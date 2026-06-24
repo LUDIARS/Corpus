@@ -22,7 +22,7 @@ import { requireAuth, startAuth } from './auth.ts';
 import { HubRegistry } from './hub/registry.ts';
 import { startHealthLoop } from './hub/aggregate.ts';
 import { readDiscoveryConfig, startDiscoveryLoop } from './hub/discovery.ts';
-import { makeTokenProvider } from './hub/tokens.ts';
+import { makeTokenProvider, type TokenProvider } from './hub/tokens.ts';
 import { SelfConnector } from './connectors/builtin.ts';
 import { makeHubRouter } from './routes/hub.ts';
 import { makeMeRouter } from './routes/me.ts';
@@ -99,10 +99,20 @@ async function main(): Promise<void> {
   // 認証トークン伝播 (D5) — プラグインの setup に渡す CorpusContext.tokenProvider
   // になるため、 プラグインロードより前に組み立てる。 plugin proxy 経路と
   // `/api/hub/data` 集約経路で同一インスタンスを共有する (経路依存の auth を作らない)。
-  const tokenProvider = makeTokenProvider(
-    process.env.CORPUS_TOKEN_MODE,
-    CERNERE_BASE_URL,
-  );
+  // CORPUS_TOKEN_MODE は明示必須 (無言フォールバック禁止 RULE §7.1)。 未設定で
+  // 起動できるのは dev 無認証経路 (CORPUS_NO_AUTH=1) のときだけ — その場合のみ
+  // passthrough を暗黙既定として許す。
+  let tokenProvider: TokenProvider;
+  try {
+    tokenProvider = makeTokenProvider(
+      process.env.CORPUS_TOKEN_MODE,
+      CERNERE_BASE_URL,
+      { allowImplicitPassthrough: NO_AUTH },
+    );
+  } catch (e) {
+    console.error(`[corpus] ${(e as Error).message}`);
+    process.exit(1);
+  }
 
   // hub 機構: 組み込みコネクタ + プラグインパック
   const registry = new HubRegistry(db);

@@ -52,6 +52,21 @@ CLI args (env と同等、 env より優先):
 ⚠️ `--no-cernere` / `CORPUS_NO_AUTH=1` は **ローカル開発専用**。 admin 権限の
 dev-user が全リクエストを処理する状態になるため、 本番では絶対に立てない。
 
+### 参照先トークン伝播 (`CORPUS_TOKEN_MODE`)
+
+参照先サービスを叩くとき、 どのトークンを送るかを `CORPUS_TOKEN_MODE` で選ぶ
+(D5)。 **明示必須** — 未設定だと起動を拒否する (無言フォールバック禁止。 設定
+漏れが「ユーザ Bearer 素通し」 = 最も弱い経路に静かに落ちるのを防ぐ)。
+
+| 値 | 意味 |
+|----|------|
+| `passthrough` | 受信 Bearer をそのまま転送 (audience が揃う構成 / 無認証ローカル直結向け) |
+| `cernere-project-token` | 参照先プロジェクト用の短命 PASETO を Cernere で発行 (本番想定) |
+
+例外: ローカル無認証 dev (`--no-cernere` / `CORPUS_NO_AUTH=1`) のときだけ、
+未設定でも `passthrough` を既定として許す (ローカル開発を壊さないため)。 不正な
+値 (上記以外) はこの dev 例外下でも常に起動拒否する。
+
 ローカルアプリ:
 
 ```sh

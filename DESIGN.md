@@ -248,6 +248,7 @@ inject してから `index.ts` を読む。 `.env` 直書き / Excubitor inject 
 | `CORPUS_PORT`        | listen port |
 | `CORPUS_DATA`        | SQLite 等のデータディレクトリ |
 | `CORPUS_REMOTE_URL`  | ローカルアプリが叩くサーバサイドアプリ URL (マルチ情報用) |
+| `CORPUS_TOKEN_MODE`  | 参照先トークン伝播の方式 (D5) — `passthrough` か `cernere-project-token` を**明示必須**。 未設定は起動拒否 (無言フォールバック禁止)。 例外として dev 無認証 (`CORPUS_NO_AUTH=1`) のときだけ未設定で passthrough を既定とする |
 | `CORPUS_DISCOVERY_LOCKED` | `1` で起動後の discovery 設定変更を全拒否 (継承先固定化用) — §9.3 |
 
 ### 9.3 起動後の連携先変更 (runtime discovery)

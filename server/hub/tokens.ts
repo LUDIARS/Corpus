@@ -107,13 +107,53 @@ function tokenFingerprint(token: string): string {
 
 export type TokenMode = 'passthrough' | 'cernere-project-token';
 
-/** env CORPUS_TOKEN_MODE から TokenProvider を組み立てる。 */
+/** makeTokenProvider のオプション。 */
+export interface MakeTokenProviderOptions {
+  /**
+   * CORPUS_TOKEN_MODE 未設定時に passthrough を暗黙既定として許すか。
+   * **ローカル無認証 dev 経路 (CORPUS_NO_AUTH=1) のときだけ** true にする。
+   * 本番/通常起動では false のまま = 未設定なら fail-closed (起動拒否)。
+   */
+  allowImplicitPassthrough?: boolean;
+}
+
+/**
+ * env CORPUS_TOKEN_MODE から TokenProvider を組み立てる。
+ *
+ * [[feedback_no_silent_fallback]] (RULE_CODE §7.1): 設定不備を最も弱い経路
+ * (passthrough = ユーザ Bearer 素通し) に**無言フォールバックしない**。
+ *  - 'passthrough' / 'cernere-project-token' を明示したときのみその provider。
+ *  - 未設定: fail-closed で throw。 ただし dev 無認証経路
+ *    (allowImplicitPassthrough=true) のみ passthrough を許す。
+ *  - 未知の値: dev でも常に throw (明示的な誤設定)。
+ *
+ * throw した Error は呼び出し側 (index.ts) が捕捉して exit(1) する。
+ */
 export function makeTokenProvider(
   mode: string | undefined,
   cernereBaseUrl: string,
+  opts: MakeTokenProviderOptions = {},
 ): TokenProvider {
-  if (mode === 'cernere-project-token') {
+  const normalized = mode?.trim();
+  if (normalized === 'cernere-project-token') {
     return new CernereProjectTokenProvider(cernereBaseUrl.replace(/\/+$/, ''));
   }
-  return new PassthroughTokenProvider();
+  if (normalized === 'passthrough') {
+    return new PassthroughTokenProvider();
+  }
+  if (!normalized) {
+    if (opts.allowImplicitPassthrough) {
+      return new PassthroughTokenProvider();
+    }
+    throw new Error(
+      'CORPUS_TOKEN_MODE が未設定です。 passthrough か cernere-project-token を' +
+        '明示設定してください (本番想定は cernere-project-token)。 ' +
+        'ローカル無認証 dev では --no-cernere / CORPUS_NO_AUTH=1 を立てると ' +
+        'passthrough が既定になります。',
+    );
+  }
+  throw new Error(
+    `CORPUS_TOKEN_MODE='${normalized}' は不正です。 ` +
+      'passthrough か cernere-project-token を指定してください。',
+  );
 }
