@@ -64,16 +64,21 @@ export class CernereProjectTokenProvider implements TokenProvider {
     target: DownstreamTarget,
   ): Promise<string | null> {
     if (!incomingToken) return null;
+    // baseUrl 未確定 (未設定コネクタ) では project-token を発行しない。 Cernere は
+    // hub_url 必須 (HS256 fallback 撤去済み) なので発行要求は 400 になるだけ。 null を
+    // 返してトークン無しで進め、 接続先未設定コネクタ自身に 503 を返させる。
+    if (!target.baseUrl) return null;
     const key = `${tokenFingerprint(incomingToken)}:${target.projectKey}:${target.baseUrl}`;
     const cached = this.cache.get(key);
     // 30s の余裕を見て期限内ならキャッシュ利用
     if (cached && cached.expiresAt > Date.now() + 30_000) return cached.token;
     try {
-      const reqBody: Record<string, string> = { project_key: target.projectKey };
-      // hub_url を渡すと Cernere は PASETO v4 を mint する (Issue #91 Phase 1)。
-      // 渡さないと HS256 fallback で、 PASETO 専用サービス (Bibliotheca 等) が
-      // トークンを受け付けない。 baseUrl 空のコネクタは旧経路を踏む。
-      if (target.baseUrl) reqBody.hub_url = target.baseUrl;
+      // hub_url (= 接続先 baseUrl) を PASETO の aud claim にするため必須で渡す
+      // (Cernere Issue #91 / aud 必須化)。 Cernere は PASETO v4 (Ed25519) を mint する。
+      const reqBody: Record<string, string> = {
+        project_key: target.projectKey,
+        hub_url: target.baseUrl,
+      };
       const res = await fetch(`${this.cernereBaseUrl}/api/auth/project-token`, {
         method: 'POST',
         headers: {
