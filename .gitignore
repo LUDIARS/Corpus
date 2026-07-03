@@ -10,6 +10,8 @@ public/vendor/
 desktop/out/
 desktop/dist/
 *.tsbuildinfo
+*.stackdump
+logs/
 
 # ローカル依存ライブラリ (git submodule update --init でセットアップ)
 /lib/
