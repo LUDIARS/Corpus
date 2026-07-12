@@ -48,6 +48,37 @@ const device = {
 };
 
 describe('CernereCompositeAuthClient', () => {
+  it('invokes fetch with the browser global as its receiver', async () => {
+    const openWebSocket = vi.fn();
+    const fetchMock = vi.fn(function (this: unknown) {
+      if (this !== globalThis) {
+        throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+      }
+      return Promise.resolve(
+        Response.json({ error: 'Invalid email or password' }, { status: 401 }),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const client = new CernereCompositeAuthClient('http://127.0.0.1:8080', {
+        openWebSocket,
+      });
+
+      await expect(
+        client.login({
+          email: 'user@example.com',
+          password: 'wrong-password',
+          device,
+        }),
+      ).rejects.toThrow('Invalid email or password');
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(openWebSocket).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('adapts the ticket WebSocket challenge to CompositeLogin authApi', async () => {
     const fetchMock = vi.fn(async () =>
       Response.json({
