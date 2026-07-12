@@ -61,6 +61,17 @@ const NO_AUTH = process.env.CORPUS_NO_AUTH === '1';
 const CERNERE_BASE_URL = NO_AUTH
   ? (process.env.CERNERE_BASE_URL?.trim() || 'http://noauth.invalid')
   : requireEnv('CERNERE_BASE_URL');
+const AUTH_UI_MODE = (() => {
+  const value = process.env.CORPUS_AUTH_UI_MODE?.trim() || 'composite';
+  if (value !== 'composite' && value !== 'passkey') {
+    console.error('[corpus] CORPUS_AUTH_UI_MODE は composite または passkey を指定してください。');
+    process.exit(1);
+  }
+  return value;
+})();
+const CERNERE_FRONTEND_URL = AUTH_UI_MODE === 'passkey' && !NO_AUTH
+  ? requireEnv('CERNERE_FRONTEND_URL')
+  : (process.env.CERNERE_FRONTEND_URL?.trim() || '');
 const AUDIENCE = NO_AUTH
   ? (process.env.CORPUS_PUBLIC_URL?.trim() || `http://localhost:${PORT}`)
   : requireEnv('CORPUS_PUBLIC_URL');
@@ -146,6 +157,8 @@ async function main(): Promise<void> {
     c.json({
       service: 'corpus',
       cernereBaseUrl: CERNERE_BASE_URL,
+      cernereFrontendUrl: CERNERE_FRONTEND_URL,
+      authUiMode: AUTH_UI_MODE,
       publicUrl: AUDIENCE,
     }),
   );
@@ -185,6 +198,9 @@ async function main(): Promise<void> {
   // Cernere の組み込み CompositeLogin が使う pre-auth API。
   // ブラウザへ資格情報レスポンスの送信先を一つに保ち、CORS 依存を避ける。
   app.post('/auth/composite/:action', (c) => {
+    if (AUTH_UI_MODE === 'passkey') {
+      return c.json({ error: 'auth_method_disabled' }, 404);
+    }
     const action = c.req.param('action');
     if (!['login', 'register', 'mfa-verify'].includes(action)) {
       return c.json({ error: 'unknown_composite_action' }, 404);
@@ -204,6 +220,9 @@ async function main(): Promise<void> {
   // pre-auth ログイン代行 — host が Cernere /api/auth/login へ中継し accessToken
   // を返す (ブラウザ→Cernere の CORS 回避 + §11.4 host 代行)。
   app.post('/auth/login', async (c) => {
+    if (AUTH_UI_MODE === 'passkey') {
+      return c.json({ error: 'auth_method_disabled' }, 404);
+    }
     let body: unknown;
     try {
       body = await c.req.json();
