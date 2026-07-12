@@ -9,8 +9,9 @@
     "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "jsx": "react-jsx",
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["public/src/**/*.ts"]
+  "include": ["public/src/**/*.ts", "public/src/**/*.tsx"]
 }
