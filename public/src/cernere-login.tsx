@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import {
   CompositeLogin,
+  CompositePasskeyPopup,
   type CompositeAuthApi,
   type CompositeAuthResponse,
   type DeviceAnomaly,
@@ -17,6 +18,8 @@ interface CompositeStartResponse extends CompositeAuthResponse {
 
 interface PublicConfig {
   cernereBaseUrl?: string;
+  cernereFrontendUrl?: string;
+  authUiMode?: 'composite' | 'passkey';
 }
 
 type PendingKind = 'authenticate' | 'verify' | 'resend';
@@ -335,6 +338,33 @@ function LoginHost({
   );
 }
 
+function PasskeyLoginHost({
+  cernereFrontendUrl,
+  message,
+}: {
+  cernereFrontendUrl: string;
+  message: string;
+}) {
+  const [error, setError] = useState('');
+  return (
+    <>
+      <h1>Officina - GLab</h1>
+      <p className="muted">{message || 'ログインはここから'}</p>
+      {error && <p className="error">{error}</p>}
+      <CompositePasskeyPopup
+        cernereUrl={cernereFrontendUrl}
+        className="primary"
+        buttonLabel="ログイン"
+        onError={(cause) => setError(cause.message)}
+        onAuthCode={async (code) => {
+          setError('');
+          await exchangeAuthCode(code);
+        }}
+      />
+    </>
+  );
+}
+
 /** Cernere の公開設定を読み、組み込みログインUIを mount する。 */
 export function mountCernereLogin(
   mount: HTMLElement,
@@ -353,6 +383,18 @@ export function mountCernereLogin(
         throw new Error('Cernere の接続先を取得できませんでした');
       }
       if (disposed) return;
+      if (config.authUiMode === 'passkey') {
+        if (!config.cernereFrontendUrl) {
+          throw new Error('Cernere ログイン画面の接続先を取得できませんでした');
+        }
+        root.render(
+          <PasskeyLoginHost
+            cernereFrontendUrl={config.cernereFrontendUrl}
+            message={message}
+          />,
+        );
+        return;
+      }
       client = new CernereCompositeAuthClient(config.cernereBaseUrl);
       root.render(<LoginHost client={client} message={message} />);
     } catch (cause) {
