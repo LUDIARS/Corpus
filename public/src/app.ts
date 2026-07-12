@@ -7,7 +7,8 @@
 //
 // ドメイン UI は一切持たない。 学校等の機能はプラグインの panel.js 側。
 
-import { apiFetch, apiJson, AuthError, clearToken, getToken, loginRedirect, setToken } from './api.ts';
+import { apiFetch, apiJson, AuthError, clearToken, getToken } from './api.ts';
+import { mountCernereLogin } from './cernere-login.tsx';
 import type {
   HubOverview,
   Identity,
@@ -74,69 +75,17 @@ function flashHmr(msg: string): void {
   setTimeout(() => t.remove(), 1600);
 }
 
+let unmountLogin: (() => void) | null = null;
+
 function showLogin(message: string): void {
+  unmountLogin?.();
+  unmountLogin = null;
   app.innerHTML = '';
   const box = el('div', 'login');
-  box.appendChild(el('h1', undefined, 'Corpus'));
-  if (message) box.appendChild(el('p', 'muted', message));
   const mount = el('div', 'login-ui');
   box.appendChild(mount);
   app.appendChild(box);
-  void renderLoginUi(mount);
-}
-
-// サービス (Cernere) の login UI キー (html 直接定義、 §11.3) を pre-auth で
-// 取得して挿入し、 form[data-corpus-login] の submit を host (Corpus) が
-// /auth/login へ代行中継する (§11.4)。 取得失敗時は旧リダイレクトに退避。
-async function renderLoginUi(mount: HTMLElement): Promise<void> {
-  try {
-    const res = await fetch('/auth/ui');
-    if (!res.ok) throw new Error(String(res.status));
-    const ui = (await res.json()) as { kind?: string; html?: string };
-    if (ui.kind === 'html' && typeof ui.html === 'string') {
-      mount.innerHTML = ui.html;
-      wireLoginForm(mount);
-      return;
-    }
-    throw new Error('unsupported login ui kind');
-  } catch {
-    const btn = el('button', 'primary', 'Cernere でログイン');
-    btn.onclick = () => void loginRedirect();
-    mount.appendChild(btn);
-  }
-}
-
-function wireLoginForm(mount: HTMLElement): void {
-  const form = mount.querySelector<HTMLFormElement>('form[data-corpus-login]');
-  if (!form) return;
-  const errBox = mount.querySelector<HTMLElement>('[data-corpus-login-error]');
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    if (errBox) errBox.textContent = '';
-    const data = new FormData(form);
-    void (async () => {
-      try {
-        const res = await fetch('/auth/login', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            email: String(data.get('email') ?? ''),
-            password: String(data.get('password') ?? ''),
-          }),
-        });
-        const body = (await res.json()) as { accessToken?: string; error?: string };
-        if (!res.ok || !body.accessToken) {
-          throw new Error(body.error || `login failed (${res.status})`);
-        }
-        setToken(body.accessToken);
-        location.reload();
-      } catch (err) {
-        if (errBox) {
-          errBox.textContent = err instanceof Error ? err.message : String(err);
-        }
-      }
-    })();
-  });
+  unmountLogin = mountCernereLogin(mount, message);
 }
 
 const HEALTH_LABEL: Record<string, string> = {
@@ -422,7 +371,7 @@ function renderShell(
   app.innerHTML = '';
 
   const header = el('header', 'topbar');
-  header.appendChild(el('span', 'brand', 'Corpus'));
+  header.appendChild(el('span', 'brand', 'Officina - GLab'));
   const who = el('span', 'who', identity.displayName ?? identity.userId);
   header.appendChild(who);
   const logout = el('button', 'ghost', 'ログアウト');
@@ -477,7 +426,7 @@ function renderShell(
 
 async function boot(): Promise<void> {
   if (!getToken()) {
-    showLogin('Cernere でログインしてください。');
+    showLogin('ログインはここから');
     return;
   }
   try {
