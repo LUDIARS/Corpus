@@ -68,7 +68,8 @@ export class CernereCompositeAuthClient implements CompositeAuthApi {
     private readonly cernereBaseUrl: string,
     deps: CernereCompositeClientDeps = {},
   ) {
-    this.fetchImpl = deps.fetch ?? fetch;
+    const fetchImpl = deps.fetch ?? globalThis.fetch;
+    this.fetchImpl = fetchImpl.bind(globalThis);
     this.openWebSocket =
       deps.openWebSocket ?? ((url, protocols) => new WebSocket(url, protocols));
   }
