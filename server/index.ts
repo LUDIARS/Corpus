@@ -150,17 +150,56 @@ async function main(): Promise<void> {
     }),
   );
 
-  // pre-auth ログイン UI (§11.4) — Cernere の login UI キー (html 直接定義) を
-  // host (Corpus) が中継する。 認証不要 (requireAuth より前)。
-  app.get('/auth/ui', async (c) => {
+  async function proxyCernerePost(
+    c: Context,
+    path: string,
+    failureCode: string,
+  ): Promise<Response> {
+    let body: unknown;
     try {
-      const r = await fetch(`${CERNERE_BASE_URL}/api/corpus/ui/login`);
-      if (!r.ok) return c.json({ error: 'login_ui_unavailable' }, 502);
-      return c.json((await r.json()) as Record<string, unknown>);
-    } catch (e) {
-      return c.json({ error: 'login_ui_fetch_failed', detail: String(e) }, 502);
+      body = await c.req.json();
+    } catch {
+      return Response.json({ error: 'invalid_json' }, { status: 400 });
     }
+    try {
+      const upstream = await fetch(`${CERNERE_BASE_URL}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return new Response(await upstream.text(), {
+        status: upstream.status,
+        headers: {
+          'content-type':
+            upstream.headers.get('content-type') ?? 'application/json; charset=utf-8',
+        },
+      });
+    } catch (error) {
+      return Response.json(
+        { error: failureCode, detail: String(error) },
+        { status: 502 },
+      );
+    }
+  }
+
+  // Cernere の組み込み CompositeLogin が使う pre-auth API。
+  // ブラウザへ資格情報レスポンスの送信先を一つに保ち、CORS 依存を避ける。
+  app.post('/auth/composite/:action', (c) => {
+    const action = c.req.param('action');
+    if (!['login', 'register', 'mfa-verify'].includes(action)) {
+      return c.json({ error: 'unknown_composite_action' }, 404);
+    }
+    return proxyCernerePost(
+      c,
+      `/api/auth/composite/${action}`,
+      'composite_proxy_failed',
+    );
   });
+
+  // WebSocket 本人確認で得た one-time authCode を user token に交換する。
+  app.post('/auth/exchange', (c) =>
+    proxyCernerePost(c, '/api/auth/exchange', 'exchange_proxy_failed'),
+  );
 
   // pre-auth ログイン代行 — host が Cernere /api/auth/login へ中継し accessToken
   // を返す (ブラウザ→Cernere の CORS 回避 + §11.4 host 代行)。

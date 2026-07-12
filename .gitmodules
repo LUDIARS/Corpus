@@ -1,3 +1,6 @@
 [submodule "lib/vestigium"]
 	path = lib/vestigium
 	url = https://github.com/LUDIARS/Vestigium.git
+[submodule "lib/cernere"]
+	path = lib/cernere
+	url = https://github.com/LUDIARS/Cernere.git

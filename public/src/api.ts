@@ -62,16 +62,3 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) throw new Error(`${path} → ${res.status}`);
   return (await res.json()) as T;
 }
-
-/** Cernere ログインへリダイレクトする。 */
-export async function loginRedirect(): Promise<void> {
-  try {
-    const res = await fetch('/api/public-config');
-    const cfg = (await res.json()) as { cernereBaseUrl?: string };
-    const base = (cfg.cernereBaseUrl ?? '').replace(/\/+$/, '');
-    const back = encodeURIComponent(location.origin + location.pathname);
-    location.href = `${base}/auth?redirect=${back}`;
-  } catch {
-    alert('Cernere の設定取得に失敗しました。');
-  }
-}
