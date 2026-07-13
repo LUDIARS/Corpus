@@ -24,7 +24,7 @@
     "@ludiars/vestigium": "file:./lib/vestigium",
     "better-sqlite3": "^11.3.0",
     "dockview-core": "^6.6.0",
-    "hono": "^4.6.10",
+    "hono": "^4.12.30",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "tsx": "^4.21.0"
