@@ -26,6 +26,7 @@ import { makeTokenProvider, type TokenProvider } from './hub/tokens.ts';
 import { SelfConnector } from './connectors/builtin.ts';
 import { makeHubRouter } from './routes/hub.ts';
 import { makeMeRouter } from './routes/me.ts';
+import { getListenOptions } from './listen-options.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -411,7 +412,7 @@ async function main(): Promise<void> {
     return c.redirect('/');
   });
 
-  serve({ fetch: app.fetch, port: PORT }, (info) => {
+  serve({ fetch: app.fetch, ...getListenOptions(PORT, NO_AUTH) }, (info) => {
     console.log(`[corpus] listening on http://localhost:${info.port}`);
     console.log(`[corpus] data dir: ${DATA_DIR}`);
     console.log(`[corpus] cernere: ${NO_AUTH ? '(bypassed)' : CERNERE_BASE_URL}`);
