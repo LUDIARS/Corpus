@@ -1,6 +1,8 @@
 node_modules/
 data/
 *.log
+*.stackdump
+logs/
 .env
 .env.secrets
 .env.local
