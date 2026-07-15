@@ -33,7 +33,7 @@ import {
   missingWantedKeys,
   hasInfisicalCreds,
 } from './lib/env-bootstrap.ts';
-import { install as installVestigium } from '@ludiars/vestigium';
+import { installLogging } from './lib/logging.ts';
 
 interface ArgSpec {
   flag: string;          // '--port'
@@ -82,11 +82,7 @@ function parseArgsToEnv(argv: readonly string[]): void {
 }
 
 const main = async (): Promise<void> => {
-  installVestigium({
-    serviceCode: 'corpus',
-    captureConsole: true,
-    pinoTransport: false,
-  });
+  installLogging();
   parseArgsToEnv(process.argv.slice(2));
 
   // --no-cernere 時は WANTED_KEYS 警告 / index.ts の requireEnv を緩めるため、

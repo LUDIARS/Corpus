@@ -1,15 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import {
   CompositeLogin,
-  CompositePasskeyPopup,
   type CompositeAuthApi,
   type CompositeAuthResponse,
   type DeviceAnomaly,
   type DeviceFingerprint,
 } from '../../lib/cernere/packages/composite/src/ui/index.ts';
-import { setToken } from './api.ts';
+import { clearLegacyToken } from './api.ts';
 
 interface CompositeStartResponse extends CompositeAuthResponse {
   ticket?: string;
@@ -17,7 +16,6 @@ interface CompositeStartResponse extends CompositeAuthResponse {
 }
 
 interface PublicConfig {
-  cernereBaseUrl?: string;
   cernereFrontendUrl?: string;
   authUiMode?: 'composite' | 'passkey';
 }
@@ -51,27 +49,43 @@ type CompositeServerMessage =
 export interface CernereCompositeClientDeps {
   fetch?: typeof fetch;
   openWebSocket?: (url: string, protocols: string[]) => WebSocket;
+  webSocketBaseUrl?: string;
 }
 
 const WS_OPEN = 1;
 const REQUEST_TIMEOUT_MS = 30_000;
+const COMPOSITE_STATE_PARAM = 'cernere_composite_state';
+const COMPOSITE_STATE_KEY = 'cernere:composite:redirect-state';
+
+export function buildPasskeyRedirectUrl(
+  cernereFrontendUrl: string,
+  currentUrl: string,
+  state: string,
+): string {
+  const callbackUrl = new URL(currentUrl);
+  callbackUrl.searchParams.delete('code');
+  callbackUrl.searchParams.set(COMPOSITE_STATE_PARAM, state);
+  const loginUrl = new URL('/composite/login', cernereFrontendUrl);
+  loginUrl.searchParams.set('redirect_uri', callbackUrl.toString());
+  loginUrl.searchParams.set('auth_mode', 'passkey');
+  return loginUrl.toString();
+}
 
 /** 現行 Cernere の ticket WebSocket を公開 CompositeLogin の authApi に変換する。 */
 export class CernereCompositeAuthClient implements CompositeAuthApi {
   private readonly fetchImpl: typeof fetch;
   private readonly openWebSocket: (url: string, protocols: string[]) => WebSocket;
+  private readonly webSocketBaseUrl: string;
   private socket: WebSocket | null = null;
   private pending: PendingRequest | null = null;
   private deviceToken = '';
 
-  constructor(
-    private readonly cernereBaseUrl: string,
-    deps: CernereCompositeClientDeps = {},
-  ) {
+  constructor(deps: CernereCompositeClientDeps = {}) {
     const fetchImpl = deps.fetch ?? globalThis.fetch;
     this.fetchImpl = fetchImpl.bind(globalThis);
     this.openWebSocket =
       deps.openWebSocket ?? ((url, protocols) => new WebSocket(url, protocols));
+    this.webSocketBaseUrl = deps.webSocketBaseUrl ?? globalThis.location.origin;
   }
 
   login(params: {
@@ -148,7 +162,11 @@ export class CernereCompositeAuthClient implements CompositeAuthApi {
     wsPath: string,
     device: DeviceFingerprint,
   ): Promise<CompositeAuthResponse> {
-    const url = new URL(wsPath, this.cernereBaseUrl);
+    const returnedPath = new URL(wsPath, 'http://cernere.invalid').pathname;
+    if (returnedPath !== '/auth/composite-ws') {
+      throw new Error('Cernere returned an invalid WebSocket path');
+    }
+    const url = new URL('/auth/composite-ws', this.webSocketBaseUrl);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     url.searchParams.delete('ticket');
 
@@ -289,13 +307,13 @@ async function exchangeAuthCode(authCode: string): Promise<void> {
     body: JSON.stringify({ code: authCode }),
   });
   const data = (await response.json().catch(() => ({}))) as {
-    accessToken?: string;
+    ok?: boolean;
     error?: string;
   };
-  if (!response.ok || !data.accessToken) {
+  if (!response.ok || !data.ok) {
     throw new Error(data.error || 'Cernere token exchange failed');
   }
-  setToken(data.accessToken);
+  clearLegacyToken();
   location.reload();
 }
 
@@ -347,21 +365,50 @@ function PasskeyLoginHost({
   message: string;
 }) {
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    const callbackUrl = new URL(location.href);
+    const state = callbackUrl.searchParams.get(COMPOSITE_STATE_PARAM);
+    const code = callbackUrl.searchParams.get('code');
+    if (!state || !code) return;
+
+    callbackUrl.searchParams.delete(COMPOSITE_STATE_PARAM);
+    callbackUrl.searchParams.delete('code');
+    history.replaceState({}, '', callbackUrl.toString());
+
+    const expectedState = sessionStorage.getItem(COMPOSITE_STATE_KEY);
+    sessionStorage.removeItem(COMPOSITE_STATE_KEY);
+    if (!expectedState || expectedState !== state) {
+      setError('ログインの復帰情報を検証できませんでした');
+      return;
+    }
+    void exchangeAuthCode(code).catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    });
+  }, []);
+
+  const startPasskeyLogin = () => {
+    try {
+      const state = crypto.randomUUID();
+      sessionStorage.setItem(COMPOSITE_STATE_KEY, state);
+      location.assign(buildPasskeyRedirectUrl(cernereFrontendUrl, location.href, state));
+    } catch {
+      setError('Cernere のログイン先を作成できませんでした');
+    }
+  };
+
   return (
     <>
       <h1>Officina - GLab</h1>
       <p className="muted">{message || 'ログインはここから'}</p>
       {error && <p className="error">{error}</p>}
-      <CompositePasskeyPopup
-        cernereUrl={cernereFrontendUrl}
+      <button
+        type="button"
         className="primary"
-        buttonLabel="ログイン"
-        onError={(cause) => setError(cause.message)}
-        onAuthCode={async (code) => {
-          setError('');
-          await exchangeAuthCode(code);
-        }}
-      />
+        onClick={startPasskeyLogin}
+      >
+        ログイン
+      </button>
     </>
   );
 }
@@ -380,7 +427,7 @@ export function mountCernereLogin(
     try {
       const response = await fetch('/api/public-config');
       const config = (await response.json()) as PublicConfig;
-      if (!response.ok || !config.cernereBaseUrl) {
+      if (!response.ok) {
         throw new Error('Cernere の接続先を取得できませんでした');
       }
       if (disposed) return;
@@ -396,7 +443,7 @@ export function mountCernereLogin(
         );
         return;
       }
-      client = new CernereCompositeAuthClient(config.cernereBaseUrl);
+      client = new CernereCompositeAuthClient();
       root.render(<LoginHost client={client} message={message} />);
     } catch (cause) {
       if (!disposed) {

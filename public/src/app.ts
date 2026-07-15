@@ -7,7 +7,7 @@
 //
 // ドメイン UI は一切持たない。 学校等の機能はプラグインの panel.js 側。
 
-import { apiFetch, apiJson, AuthError, clearToken, getToken } from './api.ts';
+import { apiFetch, apiJson, AuthError, clearLegacyToken } from './api.ts';
 import { mountCernereLogin } from './cernere-login.tsx';
 import type {
   HubOverview,
@@ -233,10 +233,7 @@ async function apiFetchForPanel(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  const token = getToken();
-  const headers = new Headers(init.headers);
-  if (token) headers.set('authorization', `Bearer ${token}`);
-  return fetch(path, { ...init, headers });
+  return fetch(path, { ...init, credentials: 'same-origin' });
 }
 
 /** 参照サービス (Bb / Ae 等) の Corpus 用 UI パネルを表示する (D4 / §13)。 */
@@ -376,8 +373,11 @@ function renderShell(
   header.appendChild(who);
   const logout = el('button', 'ghost', 'ログアウト');
   logout.onclick = () => {
-    clearToken();
-    showLogin('ログアウトしました。');
+    void fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' })
+      .finally(() => {
+        clearLegacyToken();
+        showLogin('ログアウトしました。');
+      });
   };
   header.appendChild(logout);
   app.appendChild(header);
@@ -425,10 +425,7 @@ function renderShell(
 }
 
 async function boot(): Promise<void> {
-  if (!getToken()) {
-    showLogin('ログインはここから');
-    return;
-  }
+  clearLegacyToken();
   try {
     const identity = await apiJson<Identity>('/api/me');
     const { modules } = await apiJson<{ modules: ModuleInfo[] }>(
@@ -440,7 +437,6 @@ async function boot(): Promise<void> {
     renderShell(identity, modules, services);
   } catch (e) {
     if (e instanceof AuthError) {
-      clearToken();
       showLogin('セッションが切れました。 再度ログインしてください。');
     } else {
       app.innerHTML = '';
