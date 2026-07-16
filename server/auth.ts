@@ -15,6 +15,7 @@
 // 必然的なトレードオフ (leaf サービスの 6h 公開鍵 fetch より Cernere 密結合)。
 
 import type { Context, MiddlewareHandler } from 'hono';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { createHash } from 'node:crypto';
 import { resolveExternalId, type CorpusDb } from './db.ts';
 
@@ -40,6 +41,12 @@ interface AuthOptions {
   db: CorpusDb;
   /** この Corpus が接続する Cernere の issuer 識別子。 */
   issuer: string;
+  cookieSecure: boolean;
+}
+
+export interface AuthTokenPair {
+  accessToken: string;
+  refreshToken: string;
 }
 
 interface CacheEntry {
@@ -49,6 +56,11 @@ interface CacheEntry {
 
 let optsRef: AuthOptions | null = null;
 const cache = new Map<string, CacheEntry>();
+const refreshInFlight = new Map<string, Promise<AuthTokenPair | null>>();
+const ACCESS_COOKIE = 'cernere_token';
+const REFRESH_COOKIE = 'cernere_refresh_token';
+const ACCESS_COOKIE_MAX_AGE_SECONDS = 55 * 60;
+const REFRESH_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
 export function startAuth(opts: AuthOptions): void {
   optsRef = { ...opts, cernereBaseUrl: opts.cernereBaseUrl.replace(/\/+$/, '') };
@@ -101,13 +113,64 @@ async function verifyToken(token: string): Promise<AuthIdentity | null> {
   }
 }
 
-function extractToken(c: Context): string | null {
+function extractBearerToken(c: Context): string | null {
   const h = c.req.header('authorization');
   if (h && h.toLowerCase().startsWith('bearer ')) return h.slice(7).trim();
-  // SSO リダイレクト直後など cookie 経由のフォールバックも許可する。
-  const cookie = c.req.header('cookie') ?? '';
-  const m = cookie.match(/(?:^|;\s*)cernere_token=([^;]+)/);
-  return m && m[1] ? decodeURIComponent(m[1]) : null;
+  return null;
+}
+
+async function refreshAccessToken(refreshToken: string): Promise<AuthTokenPair | null> {
+  if (!optsRef) return null;
+  const key = fingerprint(refreshToken);
+  const existing = refreshInFlight.get(key);
+  if (existing) return existing;
+  const request = (async (): Promise<AuthTokenPair | null> => {
+    try {
+      const response = await fetch(`${optsRef?.cernereBaseUrl}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as Partial<AuthTokenPair>;
+      if (typeof body.accessToken !== 'string' || typeof body.refreshToken !== 'string') {
+        return null;
+      }
+      return { accessToken: body.accessToken, refreshToken: body.refreshToken };
+    } catch {
+      return null;
+    }
+  })().finally(() => refreshInFlight.delete(key));
+  refreshInFlight.set(key, request);
+  return request;
+}
+
+export function persistAuthCookies(c: Context, tokens: AuthTokenPair): void {
+  const secure = optsRef?.cookieSecure ?? false;
+  setCookie(c, ACCESS_COOKIE, tokens.accessToken, {
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure,
+    path: '/',
+    maxAge: ACCESS_COOKIE_MAX_AGE_SECONDS,
+  });
+  setCookie(c, REFRESH_COOKIE, tokens.refreshToken, {
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure,
+    path: '/',
+    maxAge: REFRESH_COOKIE_MAX_AGE_SECONDS,
+  });
+}
+
+export function clearAuthCookies(c: Context): void {
+  const options = { path: '/', secure: optsRef?.cookieSecure ?? false };
+  deleteCookie(c, ACCESS_COOKIE, options);
+  deleteCookie(c, REFRESH_COOKIE, options);
+}
+
+export function getRefreshToken(c: Context): string | null {
+  return getCookie(c, REFRESH_COOKIE) ?? null;
 }
 
 /** --no-cernere / CORPUS_NO_AUTH=1 のとき requireAuth が返す固定 identity。
@@ -131,9 +194,21 @@ export const requireAuth: MiddlewareHandler = async (c, next) => {
     await next();
     return;
   }
-  const token = extractToken(c);
+  const bearerToken = extractBearerToken(c);
+  let token = bearerToken ?? getCookie(c, ACCESS_COOKIE) ?? null;
+  let identity = token ? await verifyToken(token) : null;
+  if (!identity && !bearerToken) {
+    const refreshToken = getRefreshToken(c);
+    const refreshed = refreshToken ? await refreshAccessToken(refreshToken) : null;
+    if (refreshed) {
+      persistAuthCookies(c, refreshed);
+      token = refreshed.accessToken;
+      identity = await verifyToken(token);
+    } else if (refreshToken) {
+      clearAuthCookies(c);
+    }
+  }
   if (!token) return c.json({ error: 'unauthorized' }, 401);
-  const identity = await verifyToken(token);
   if (!identity) return c.json({ error: 'invalid_token' }, 401);
   c.set('auth', identity);
   // D5: 参照先トークン発行 (tokens.ts) で使う user accessToken を ctx に積む。

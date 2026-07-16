@@ -49,6 +49,16 @@ interface CachedToken {
   expiresAt: number;
 }
 
+export class DownstreamTokenError extends Error {
+  constructor(
+    readonly service: string,
+    readonly status: number | null,
+  ) {
+    super(`project-token unavailable for ${service}${status == null ? '' : ` (${status})`}`);
+    this.name = 'DownstreamTokenError';
+  }
+}
+
 /**
  * Cernere /api/auth/project-token で参照先ごとの短命 project token を発行する。
  * 受信トークンは「ログイン中ユーザの user accessToken」 である前提。
@@ -68,18 +78,23 @@ export class CernereProjectTokenProvider implements TokenProvider {
     // hub_url 必須 (HS256 fallback 撤去済み) なので発行要求は 400 になるだけ。 null を
     // 返してトークン無しで進め、 接続先未設定コネクタ自身に 503 を返させる。
     if (!target.baseUrl) return null;
-    const key = `${tokenFingerprint(incomingToken)}:${target.projectKey}:${target.baseUrl}`;
+    // Connector は fetch 用 base URL を末尾 `/` 付きで保持することがある一方、
+    // 接続先の audience 設定は末尾 `/` なしが一般的。PASETO の aud は完全一致
+    // 検証なので、発行依頼・cache key の双方を同じ canonical URL に揃える。
+    const audienceUrl = target.baseUrl.replace(/\/+$/, '');
+    const key = `${tokenFingerprint(incomingToken)}:${target.projectKey}:${audienceUrl}`;
     const cached = this.cache.get(key);
     // 30s の余裕を見て期限内ならキャッシュ利用
     if (cached && cached.expiresAt > Date.now() + 30_000) return cached.token;
+    // hub_url (= 接続先 baseUrl) を PASETO の aud claim にするため必須で渡す
+    // (Cernere Issue #91 / aud 必須化)。 Cernere は PASETO v4 (Ed25519) を mint する。
+    const reqBody: Record<string, string> = {
+      project_key: target.projectKey,
+      hub_url: audienceUrl,
+    };
+    let res: Response;
     try {
-      // hub_url (= 接続先 baseUrl) を PASETO の aud claim にするため必須で渡す
-      // (Cernere Issue #91 / aud 必須化)。 Cernere は PASETO v4 (Ed25519) を mint する。
-      const reqBody: Record<string, string> = {
-        project_key: target.projectKey,
-        hub_url: target.baseUrl,
-      };
-      const res = await fetch(`${this.cernereBaseUrl}/api/auth/project-token`, {
+      res = await fetch(`${this.cernereBaseUrl}/api/auth/project-token`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -87,21 +102,21 @@ export class CernereProjectTokenProvider implements TokenProvider {
         },
         body: JSON.stringify(reqBody),
       });
-      if (!res.ok) return null;
-      const body = (await res.json()) as {
-        accessToken?: string;
-        expiresIn?: number;
-      };
-      if (!body.accessToken) return null;
-      const ttlMs = (body.expiresIn ?? 900) * 1000;
-      this.cache.set(key, {
-        token: body.accessToken,
-        expiresAt: Date.now() + ttlMs,
-      });
-      return body.accessToken;
     } catch {
-      return null;
+      throw new DownstreamTokenError(target.service, null);
     }
+    if (!res.ok) throw new DownstreamTokenError(target.service, res.status);
+    const body = (await res.json().catch(() => null)) as {
+      accessToken?: string;
+      expiresIn?: number;
+    } | null;
+    if (!body?.accessToken) throw new DownstreamTokenError(target.service, 502);
+    const ttlMs = (body.expiresIn ?? 900) * 1000;
+    this.cache.set(key, {
+      token: body.accessToken,
+      expiresAt: Date.now() + ttlMs,
+    });
+    return body.accessToken;
   }
 }
 

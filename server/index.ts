@@ -12,13 +12,28 @@ import type { Context } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { serve } from '@hono/node-server';
+import type { Server } from 'node:http';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
 import { openDb } from './db.ts';
-import { requireAuth, startAuth } from './auth.ts';
+import {
+  clearAuthCookies,
+  getRefreshToken,
+  persistAuthCookies,
+  requireAuth,
+  startAuth,
+  type AuthTokenPair,
+} from './auth.ts';
+import { ProjectAuthClient, type CompositeAuthAction } from './project-auth-client.ts';
+import {
+  attachCompositeWebSocketProxy,
+  type CompositeWebSocketProxyDiagnostic,
+} from './composite-ws-proxy.ts';
+import { writeDiagnostic } from './lib/logging.ts';
+import { resolveRequestOrigin } from './request-origin.ts';
 import { HubRegistry } from './hub/registry.ts';
 import { startHealthLoop } from './hub/aggregate.ts';
 import { readDiscoveryConfig, startDiscoveryLoop } from './hub/discovery.ts';
@@ -104,8 +119,16 @@ async function main(): Promise<void> {
       adminIds: ADMIN_IDS,
       db,
       issuer: CERNERE_ISSUER,
+      cookieSecure: new URL(AUDIENCE).protocol === 'https:',
     });
   }
+
+  const projectAuth = NO_AUTH ? null : new ProjectAuthClient({
+    cernereBaseUrl: CERNERE_BASE_URL,
+    clientId: requireEnv('CERNERE_PROJECT_CLIENT_ID'),
+    clientSecret: requireEnv('CERNERE_PROJECT_CLIENT_SECRET'),
+  });
+  if (projectAuth) await projectAuth.connect();
 
   // 認証トークン伝播 (D5) — プラグインの setup に渡す CorpusContext.tokenProvider
   // になるため、 プラグインロードより前に組み立てる。 plugin proxy 経路と
@@ -146,22 +169,30 @@ async function main(): Promise<void> {
   app.get('/api/health', (c) =>
     c.json({
       ok: true,
-      service: 'corpus',
+      service: process.env.CORPUS_SERVICE_ID ?? 'corpus',
+      version: process.env.CORPUS_SERVICE_VERSION ?? process.env.npm_package_version ?? 'unknown',
       port: PORT,
       modules: registry.listModules().map((m) => m.id),
     }),
   );
 
   // frontend が Cernere ログインへ飛ぶための公開設定 (認証不要)
-  app.get('/api/public-config', (c) =>
-    c.json({
+  app.get('/api/public-config', (c) => {
+    const requestOrigin = resolveRequestOrigin(c);
+    console.log(`[corpus-public-config] ${JSON.stringify({
+      requestOrigin,
+      forwardedProto: c.req.header('x-forwarded-proto') ?? null,
+    })}`);
+    c.header('Cache-Control', 'no-store');
+    return c.json({
       service: 'corpus',
-      cernereBaseUrl: CERNERE_BASE_URL,
-      cernereFrontendUrl: CERNERE_FRONTEND_URL,
+      // 旧 bundle も、実際にページを配信した同一 origin の proxy へ接続させる。
+      cernereBaseUrl: requestOrigin,
+      cernereFrontendUrl: AUTH_UI_MODE === 'passkey' ? CERNERE_FRONTEND_URL : undefined,
       authUiMode: AUTH_UI_MODE,
       publicUrl: AUDIENCE,
-    }),
-  );
+    });
+  });
 
   async function proxyCernerePost(
     c: Context,
@@ -197,7 +228,7 @@ async function main(): Promise<void> {
 
   // Cernere の組み込み CompositeLogin が使う pre-auth API。
   // ブラウザへ資格情報レスポンスの送信先を一つに保ち、CORS 依存を避ける。
-  app.post('/auth/composite/:action', (c) => {
+  app.post('/auth/composite/:action', async (c) => {
     if (AUTH_UI_MODE === 'passkey') {
       return c.json({ error: 'auth_method_disabled' }, 404);
     }
@@ -205,24 +236,29 @@ async function main(): Promise<void> {
     if (!['login', 'register', 'mfa-verify'].includes(action)) {
       return c.json({ error: 'unknown_composite_action' }, 404);
     }
-    return proxyCernerePost(
-      c,
-      `/api/auth/composite/${action}`,
-      'composite_proxy_failed',
-    );
+    if (!projectAuth) return c.json({ error: 'auth_unavailable' }, 503);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid_json' }, 400);
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return c.json({ error: 'invalid_auth_payload' }, 400);
+    }
+    try {
+      const result = await projectAuth.authenticate(
+        action as CompositeAuthAction,
+        body as Record<string, unknown>,
+      );
+      return c.json(result);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 401);
+    }
   });
 
   // WebSocket 本人確認で得た one-time authCode を user token に交換する。
-  app.post('/auth/exchange', (c) =>
-    proxyCernerePost(c, '/api/auth/exchange', 'exchange_proxy_failed'),
-  );
-
-  // pre-auth ログイン代行 — host が Cernere /api/auth/login へ中継し accessToken
-  // を返す (ブラウザ→Cernere の CORS 回避 + §11.4 host 代行)。
-  app.post('/auth/login', async (c) => {
-    if (AUTH_UI_MODE === 'passkey') {
-      return c.json({ error: 'auth_method_disabled' }, 404);
-    }
+  app.post('/auth/exchange', async (c) => {
     let body: unknown;
     try {
       body = await c.req.json();
@@ -230,16 +266,52 @@ async function main(): Promise<void> {
       return c.json({ error: 'invalid_json' }, 400);
     }
     try {
-      const r = await fetch(`${CERNERE_BASE_URL}/api/auth/login`, {
+      const upstream = await fetch(`${CERNERE_BASE_URL}/api/auth/exchange`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const data = (await r.json().catch(() => ({}))) as Record<string, unknown>;
-      return c.json(data, r.ok ? 200 : 401);
-    } catch (e) {
-      return c.json({ error: 'login_proxy_failed', detail: String(e) }, 502);
+      const data = await upstream.json().catch(() => ({})) as Partial<AuthTokenPair> & {
+        error?: string;
+      };
+      if (
+        !upstream.ok
+        || typeof data.accessToken !== 'string'
+        || typeof data.refreshToken !== 'string'
+      ) {
+        return c.json({ error: data.error ?? 'token_exchange_failed' }, 401);
+      }
+      persistAuthCookies(c, {
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken,
+      });
+      return c.json({ ok: true });
+    } catch (error) {
+      return c.json({ error: 'exchange_proxy_failed', detail: String(error) }, 502);
     }
+  });
+
+  app.post('/auth/logout', async (c) => {
+    const refreshToken = getRefreshToken(c);
+    if (refreshToken) {
+      try {
+        await fetch(`${CERNERE_BASE_URL}/api/auth/logout`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ refreshToken }),
+        });
+      } catch {
+        // Cookie は必ず破棄し、Cernere不達時もローカルのログアウトを完了する。
+      }
+    }
+    clearAuthCookies(c);
+    return c.json({ ok: true });
+  });
+
+  // pre-auth ログイン代行 — host が Cernere /api/auth/login へ中継し accessToken
+  // を返す (ブラウザ→Cernere の CORS 回避 + §11.4 host 代行)。
+  app.post('/auth/login', async (c) => {
+    return c.json({ error: 'use_project_authenticated_composite_login' }, 404);
   });
 
   // ── §12.3 HMR: UI キー version を polling して shell に push ──────────
@@ -387,7 +459,13 @@ async function main(): Promise<void> {
     const full = join(PUBLIC_DIR, file);
     if (!existsSync(full)) return c.json({ error: 'not_found' }, 404);
     const type = CONTENT_TYPES[extname(file)] ?? 'application/octet-stream';
-    return c.body(readFileSync(full), 200, { 'content-type': type });
+    const cacheControl = file === 'index.html' || file === 'app.js'
+      ? 'no-cache'
+      : undefined;
+    return c.body(readFileSync(full), 200, {
+      'content-type': type,
+      ...(cacheControl ? { 'cache-control': cacheControl } : {}),
+    });
   };
   app.get('/', (c) => serveFromPublic(c, 'index.html'));
   app.get('/index.html', (c) => serveFromPublic(c, 'index.html'));
@@ -411,7 +489,7 @@ async function main(): Promise<void> {
     return c.redirect('/');
   });
 
-  serve({ fetch: app.fetch, port: PORT }, (info) => {
+  const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
     console.log(`[corpus] listening on http://localhost:${info.port}`);
     console.log(`[corpus] data dir: ${DATA_DIR}`);
     console.log(`[corpus] cernere: ${NO_AUTH ? '(bypassed)' : CERNERE_BASE_URL}`);
@@ -422,6 +500,16 @@ async function main(): Promise<void> {
     console.log(`[corpus] modules: ${registry.listModules().map((m) => m.id).join(', ') || '(none)'}`);
     console.log(`[corpus] connectors: ${registry.listConnectors().map((c) => c.id).join(', ') || '(none)'}`);
   });
+  if (!NO_AUTH && AUTH_UI_MODE === 'composite') {
+    attachCompositeWebSocketProxy(
+      server as Server,
+      CERNERE_BASE_URL,
+    (diagnostic: CompositeWebSocketProxyDiagnostic) => {
+      writeDiagnostic('composite-ws.proxy', diagnostic);
+      console.log(`[composite-ws-proxy] ${JSON.stringify(diagnostic)}`);
+    },
+  );
+}
 
   startHealthLoop(registry, db);
   // discovery loop は上で controller 経由で start 済 — ここでは何もしない。
