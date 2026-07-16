@@ -1,9 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  buildPasskeyRedirectUrl,
   CernereCompositeAuthClient,
   type CernereCompositeClientDeps,
 } from './cernere-login.tsx';
+
+describe('passkey redirect login', () => {
+  it('uses the current window as the validated Composite callback', () => {
+    const result = new URL(buildPasskeyRedirectUrl(
+      'https://cernere.example',
+      'https://glab.example/?view=surveys',
+      'state-123',
+    ));
+    expect(result.origin).toBe('https://cernere.example');
+    expect(result.pathname).toBe('/composite/login');
+    expect(result.searchParams.get('auth_mode')).toBe('passkey');
+    const callback = new URL(result.searchParams.get('redirect_uri') ?? '');
+    expect(callback.origin).toBe('https://glab.example');
+    expect(callback.searchParams.get('view')).toBe('surveys');
+    expect(callback.searchParams.get('cernere_composite_state')).toBe('state-123');
+  });
+});
 
 class FakeSocket {
   readonly sent: string[] = [];
@@ -61,8 +79,9 @@ describe('CernereCompositeAuthClient', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     try {
-      const client = new CernereCompositeAuthClient('http://127.0.0.1:8080', {
+      const client = new CernereCompositeAuthClient({
         openWebSocket,
+        webSocketBaseUrl: 'http://127.0.0.1:5187',
       });
 
       await expect(
@@ -90,12 +109,13 @@ describe('CernereCompositeAuthClient', () => {
     let socket: FakeSocket | undefined;
     const deps: CernereCompositeClientDeps = {
       fetch: fetchMock as typeof fetch,
+      webSocketBaseUrl: 'http://127.0.0.1:5187',
       openWebSocket: (url, protocols) => {
         socket = new FakeSocket(url, protocols);
         return socket as unknown as WebSocket;
       },
     };
-    const client = new CernereCompositeAuthClient('http://127.0.0.1:8080', deps);
+    const client = new CernereCompositeAuthClient(deps);
 
     const login = client.login({
       email: 'user@example.com',
@@ -104,7 +124,7 @@ describe('CernereCompositeAuthClient', () => {
     });
     await vi.waitFor(() => expect(socket).toBeDefined());
 
-    expect(socket?.url).toBe('ws://127.0.0.1:8080/auth/composite-ws');
+    expect(socket?.url).toBe('ws://127.0.0.1:5187/auth/composite-ws');
     expect(socket?.protocols).toEqual(['ticket', 'ticket-123']);
     socket?.emit({ type: 'state', state: 'pending_device' });
     expect(JSON.parse(socket?.sent[0] ?? '{}')).toEqual({
@@ -140,11 +160,12 @@ describe('CernereCompositeAuthClient', () => {
 
   it('surfaces upstream errors without opening a WebSocket', async () => {
     const openWebSocket = vi.fn();
-    const client = new CernereCompositeAuthClient('http://127.0.0.1:8080', {
+    const client = new CernereCompositeAuthClient({
       fetch: vi.fn(async () =>
         Response.json({ error: 'Invalid email or password' }, { status: 401 }),
       ) as typeof fetch,
       openWebSocket,
+      webSocketBaseUrl: 'http://127.0.0.1:5187',
     });
 
     await expect(

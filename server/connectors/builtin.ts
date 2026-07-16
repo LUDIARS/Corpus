@@ -88,7 +88,8 @@ export class SelfConnector implements ServiceConnector {
   readonly baseUrl = '';
 
   async health(): Promise<ConnectorHealth> {
-    return { status: 'up' };
+    const version = process.env.CORPUS_SERVICE_VERSION ?? process.env.npm_package_version;
+    return { status: 'up', detail: version ? `v${version}` : 'バージョン情報なし' };
   }
 
   async fetch(): Promise<Response> {
