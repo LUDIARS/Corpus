@@ -169,7 +169,8 @@ async function main(): Promise<void> {
   app.get('/api/health', (c) =>
     c.json({
       ok: true,
-      service: 'corpus',
+      service: process.env.CORPUS_SERVICE_ID ?? 'corpus',
+      version: process.env.CORPUS_SERVICE_VERSION ?? process.env.npm_package_version ?? 'unknown',
       port: PORT,
       modules: registry.listModules().map((m) => m.id),
     }),

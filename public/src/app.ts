@@ -391,7 +391,7 @@ function renderShell(
 
   type Tab = { id: string; label: string; render: () => void };
   const tabs: Tab[] = [
-    { id: '__overview', label: '🏠 概況', render: () => void renderOverview(main) },
+    { id: '__overview', label: '🟢 ステータス', render: () => void renderOverview(main) },
     ...modules.map((m) => ({
       id: m.id,
       label: `${m.icon ?? '▫'} ${m.title}`,
