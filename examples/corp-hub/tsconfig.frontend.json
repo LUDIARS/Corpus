@@ -1,0 +1,4 @@
+{
+  "extends": "../../tsconfig.frontend.json",
+  "include": ["panel-kit.ts", "*/panel.ts"]
+}

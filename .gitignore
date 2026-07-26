@@ -6,6 +6,8 @@ data/
 .env.local
 public/app.js
 public/app.js.map
+examples/corp-hub/*/panel.js
+examples/corp-hub/*/panel.js.map
 public/vendor/
 desktop/out/
 desktop/dist/

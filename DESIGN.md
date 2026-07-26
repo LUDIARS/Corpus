@@ -622,3 +622,77 @@ UI キーを Vite の module 配信になぞらえる:
     キャッシュ descriptor で描画継続。
   - P2 HMR で内容が変わると ETag も変わるため、 rerender 時に `200` で最新を引き直す
     (version は HMR の SSE が、 内容妥当性は ETag が担保)。
+
+---
+
+## 16. エッジ認証モード (`CORPUS_AUTH_MODE=edge`) — Proposed
+
+> 2026-07-26 起案。 企業用 Hub (Corpus 派生、 1 Hub = 1 社) を Cloudflare Access の
+> 背後に置き、 **エッジで済ませた認証をそのまま Cernere へ引き渡す**ためのモード。
+> Cernere 側の受け口は `Cernere/spec/feature/edge-assertion-login.md` (`auth.edge_assertion`)。
+
+Corpus 本体はドメインを持たないので、 ここで足すのは「エッジ認証という汎用機構」だけ。
+企業固有の設定・モジュールはプラグインパック側に置く。
+
+### 16.1 モードの明示
+
+`CORPUS_AUTH_MODE` を **明示必須**にする (`CORPUS_TOKEN_MODE` と同じ思想。
+無言フォールバック禁止、 未設定は起動拒否)。
+
+| 値 | 挙動 |
+|---|---|
+| `composite` | 現行。 Cernere composite ログイン UI を Hub 内に埋め込む |
+| `edge` | 上流エッジ (Cloudflare Access) のアサーションで認証。 **ログイン UI を描かない** |
+
+`edge` では `CORPUS_AUTH_UI_MODE` は無効 (ログイン画面が存在しないため)。
+
+| env | 役割 |
+|---|---|
+| `CORPUS_EDGE_TEAM_DOMAIN` | `<team>.cloudflareaccess.com` (JWKS と `iss` の基準) |
+| `CORPUS_EDGE_AUD` | Access Application の AUD tag (完全一致で検証) |
+| `CORPUS_EDGE_DEV_IDENTITY` | 開発用の固定 identity (下記の条件付き) |
+
+### 16.2 リクエスト経路
+
+1. 全リクエストで `Cf-Access-Jwt-Assertion` ヘッダを取り出し、 team JWKS で検証する
+   (署名 / `iss` / `aud` / `exp` / サービストークン拒否)。 **Hub 側でも検証する**のは
+   Cernere 往復前に落とせるものを落とすため。 最終的な信頼判断は Cernere が行う。
+2. Hub の認証 Cookie が無い / 失効している場合、 project WS 経由で Cernere の
+   `auth.edge_assertion` を呼び、 返った `authCode` を `/api/auth/exchange` で交換する。
+   このとき **アサーションと `CF_Authorization` クッキーの値をそのまま転送**する。
+   氏名・グループ (`/cdn-cgi/access/get-identity`) を取りに行くのは **Cernere 側**で、
+   Hub は取得済みの identity JSON を渡さない — groups は認可に効くため、 署名の無い
+   値を Hub 経由で持ち込む経路を作らない。 レスポンスの `groups` は Hub 側の
+   認可判断 (admin 判定等) に使ってよい。
+3. access/refresh は **Hub origin の HttpOnly Cookie** にだけ保持する
+   (composite モードの `persistAuthCookies` をそのまま再利用。 localStorage には置かない)。
+4. access 失効時の再取得も 2 と同じ経路を通す (= 毎回アサーションを再検証する)。
+   これにより上流 IdP での無効化が最大 60 分でセッションに反映される。
+
+`Cf-Access-Authenticated-User-Email` ヘッダは署名が無いので**使わない**。
+
+### 16.3 前提 (満たさないと認証が無効化する)
+
+Hub の origin は `cloudflared` トンネル経由でしか到達できないこと。 直接到達できる
+経路が残っていると、 ヘッダを自分で付けるだけで任意ユーザに成りすませる。
+Corpus 側では検知できない構成上の前提なので、 デプロイ手順で担保する
+(`Cernere/spec/setup/cf-access-bypass.md` §5)。
+
+### 16.4 ログアウト
+
+`/auth/logout` は Cookie 破棄後に `/cdn-cgi/access/logout` へ 302 する。
+CF セッションを残すと即座に再ログインされ、 「ログアウトできない」 挙動になる。
+
+### 16.5 開発時
+
+`CORPUS_EDGE_DEV_IDENTITY=<email>` で CF を経由せず固定 identity を使える。
+有効条件は **`NODE_ENV !== production` かつ listen が loopback** のときのみで、
+本番設定で渡された場合は起動時に拒否する (fail-closed)。
+
+### 16.6 degraded
+
+| 事象 | 挙動 |
+|---|---|
+| JWKS 取得失敗 | キャッシュで継続。 キャッシュも無ければ 401 (fail-closed) |
+| ヘッダ欠落 | 401 +「Cloudflare Access 経由でアクセスしてください」 |
+| Cernere 停止 | 既存 Cookie が生きている間は継続。 新規ログインは 503 |

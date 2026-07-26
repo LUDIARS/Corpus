@@ -1,0 +1,9 @@
+{
+  "name": "corp-hub-example",
+  "description": "企業用 Hub のテンプレート — お知らせ (自前データ) / 名簿 (Cernere 正本) / 施設 (外部コネクタ) の 3 類型",
+  "modules": [
+    "announcements",
+    "directory",
+    "facility"
+  ]
+}
