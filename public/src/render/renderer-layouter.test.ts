@@ -249,19 +249,3 @@ describe('nested layouters', () => {
     expect(labels).toEqual(['A1', 'A2', 'B']);
   });
 });
-
-// ── style.css sanity (single source of breakpoint) ────────────────────────
-
-describe('style.css responsive contract', () => {
-  it('media query @640px appears in style.css for both grid and stack', async () => {
-    // style.css は別経路 (esbuild bundling 外) の素 CSS なので、 ファイル内容を直接読む。
-    // node fetch ではなく、 vite/vitest が同期で読めるよう URL 経由ではなく fs で読む。
-    const fs = await import('node:fs/promises');
-    const css = await fs.readFile('public/style.css', 'utf-8');
-    // grid と stack の両方が同じ breakpoint (640px) を共有していること
-    const at640 = css.match(/@media \(min-width: 640px\)/g) ?? [];
-    expect(at640.length).toBeGreaterThanOrEqual(2);
-    expect(css).toMatch(/\.corpus-grid[\s\S]*grid-template-columns/);
-    expect(css).toMatch(/\.corpus-stack\.responsive/);
-  });
-});

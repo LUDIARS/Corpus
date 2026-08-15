@@ -49,14 +49,18 @@ interface CachedToken {
   expiresAt: number;
 }
 
-export class DownstreamTokenError extends Error {
-  constructor(
-    readonly service: string,
-    readonly status: number | null,
-  ) {
-    super(`project-token unavailable for ${service}${status == null ? '' : ` (${status})`}`);
-    this.name = 'DownstreamTokenError';
-  }
+/**
+ * 参照先トークンが取れなかった理由をログへ残す。
+ *
+ * TokenProvider の契約は「取れなければ null」。呼び出し側は参照先の認証契約に
+ * 応じて扱い、routes/hub.ts は認証必須なら制御された 502 を返す。ここで throw すると
+ * 未捕捉の 500 になるため、失敗はログとして残したうえで null を返す。
+ */
+function warnDownstreamTokenUnavailable(service: string, status: number | null): void {
+  console.warn(
+    `[corpus/tokens] project-token unavailable for ${JSON.stringify(service)}` +
+      `${status == null ? ' (cernere unreachable)' : ` (${status})`}`,
+  );
 }
 
 /**
@@ -103,14 +107,21 @@ export class CernereProjectTokenProvider implements TokenProvider {
         body: JSON.stringify(reqBody),
       });
     } catch {
-      throw new DownstreamTokenError(target.service, null);
+      warnDownstreamTokenUnavailable(target.service, null);
+      return null;
     }
-    if (!res.ok) throw new DownstreamTokenError(target.service, res.status);
+    if (!res.ok) {
+      warnDownstreamTokenUnavailable(target.service, res.status);
+      return null;
+    }
     const body = (await res.json().catch(() => null)) as {
       accessToken?: string;
       expiresIn?: number;
     } | null;
-    if (!body?.accessToken) throw new DownstreamTokenError(target.service, 502);
+    if (!body?.accessToken) {
+      warnDownstreamTokenUnavailable(target.service, 502);
+      return null;
+    }
     const ttlMs = (body.expiresIn ?? 900) * 1000;
     this.cache.set(key, {
       token: body.accessToken,

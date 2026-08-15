@@ -1,0 +1,18 @@
+{
+  "name": "build-tooling",
+  "description": "リポジトリを動かすための道具立て。起動スクリプト、サービス定義、テストランナ設定、env CLI 設定。製品コードから参照されず、開発と運用の手順を固定する。",
+  "presetRules": [],
+  "templateRules": [],
+  "membership": [
+    {
+      "pathPattern": "(^|/)scripts/[^/]+$"
+    },
+    {
+      "pathPattern": "(^|/)vitest\\.config\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)env-cli\\.config\\.ts$"
+    }
+  ],
+  "cardTemplate": "Summarise the \"build-tooling\" domain: リポジトリを動かすための道具立て。起動スクリプト、サービス定義、テストランナ設定、env CLI 設定。製品コードから参照されず、開発と運用の手順を固定する。"
+}

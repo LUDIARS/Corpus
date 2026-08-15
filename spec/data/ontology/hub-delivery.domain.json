@@ -1,0 +1,21 @@
+{
+  "name": "hub-delivery",
+  "description": "Hub を外部へ差し出す入口。HTTP サーバの組み立て、ルータ、起動ブートストラップ、プロセス共通のロギングと env 解決。ドメイン知識は持たず、他ドメインを配線して公開する層。",
+  "presetRules": [],
+  "templateRules": [],
+  "membership": [
+    {
+      "pathPattern": "(^|/)server/index\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)server/bootstrap\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)server/routes/[^/]+$"
+    },
+    {
+      "pathPattern": "(^|/)server/lib/[^/]+$"
+    }
+  ],
+  "cardTemplate": "Summarise the \"hub-delivery\" domain: Hub を外部へ差し出す入口。HTTP サーバの組み立て、ルータ、起動ブートストラップ、プロセス共通のロギングと env 解決。ドメイン知識は持たず、他ドメインを配線して公開する層。"
+}

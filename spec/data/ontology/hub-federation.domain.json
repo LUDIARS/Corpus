@@ -1,0 +1,15 @@
+{
+  "name": "hub-federation",
+  "description": "参照先サービスを束ねる連合機構。モジュール registry、discovery、manifest 解釈、横断集約、参照先ごとの project-token 発行、コネクタ実装。Corpus 本体がドメインを持たずに他サービスの機能を差し込むための骨格。",
+  "presetRules": [],
+  "templateRules": [],
+  "membership": [
+    {
+      "pathPattern": "(^|/)server/hub/[^/]+$"
+    },
+    {
+      "pathPattern": "(^|/)server/connectors/[^/]+$"
+    }
+  ],
+  "cardTemplate": "Summarise the \"hub-federation\" domain: 参照先サービスを束ねる連合機構。モジュール registry、discovery、manifest 解釈、横断集約、参照先ごとの project-token 発行、コネクタ実装。Corpus 本体がドメインを持たずに他サービスの機能を差し込むための骨格。"
+}

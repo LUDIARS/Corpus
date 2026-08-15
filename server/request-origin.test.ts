@@ -11,27 +11,27 @@ function appWithOriginRoute(): Hono {
 describe('resolveRequestOrigin', () => {
   it('uses the request origin without a forwarding header', async () => {
     const response = await appWithOriginRoute().request('http://EducationLab.test:5187/');
-    expect(await response.text()).toBe('http://EducationLab.test:5187');
+    expect(await response.text()).toBe('http://educationlab.test:5187');
   });
 
   it('restores HTTPS terminated by a reverse proxy', async () => {
     const response = await appWithOriginRoute().request('http://EducationLab.example/', {
       headers: { 'x-forwarded-proto': 'https' },
     });
-    expect(await response.text()).toBe('https://EducationLab.example');
+    expect(await response.text()).toBe('https://educationlab.example');
   });
 
   it('uses the first value in a forwarding chain', async () => {
     const response = await appWithOriginRoute().request('http://EducationLab.example/', {
       headers: { 'x-forwarded-proto': 'https, http' },
     });
-    expect(await response.text()).toBe('https://EducationLab.example');
+    expect(await response.text()).toBe('https://educationlab.example');
   });
 
   it('ignores unsupported forwarded protocols', async () => {
     const response = await appWithOriginRoute().request('http://EducationLab.example/', {
       headers: { 'x-forwarded-proto': 'javascript' },
     });
-    expect(await response.text()).toBe('http://EducationLab.example');
+    expect(await response.text()).toBe('http://educationlab.example');
   });
 });

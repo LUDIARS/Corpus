@@ -1,0 +1,24 @@
+{
+  "name": "hub-auth",
+  "description": "Cernere を正本とする利用者認証。user accessToken の検証とキャッシュ、Cookie の発行と失効、composite ログインの WS 代行、リクエスト origin の解決、エッジ (Cloudflare Access) 配置時の設定不備ガード。信頼判断そのものは Cernere が持ち、ここは受け取りと保持を担う。",
+  "presetRules": [],
+  "templateRules": [],
+  "membership": [
+    {
+      "pathPattern": "(^|/)server/auth\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)server/project-auth-client(\\.test)?\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)server/request-origin(\\.test)?\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)server/composite-ws-proxy(\\.test)?\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)server/edge-guard(\\.test)?\\.ts$"
+    }
+  ],
+  "cardTemplate": "Summarise the \"hub-auth\" domain: Cernere を正本とする利用者認証。user accessToken の検証とキャッシュ、Cookie の発行と失効、composite ログインの WS 代行、リクエスト origin の解決、エッジ (Cloudflare Access) 配置時の設定不備ガード。信頼判断そのものは Cernere が持ち、ここは受け取りと保持を担う。"
+}

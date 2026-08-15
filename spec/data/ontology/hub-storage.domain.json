@@ -1,0 +1,12 @@
+{
+  "name": "hub-storage",
+  "description": "Hub ローカルの永続化。SQLite ハンドルとスキーマ、Cernere userId から Corpus external-id への解決。共有データの owner 識別子がここで確定する。",
+  "presetRules": [],
+  "templateRules": [],
+  "membership": [
+    {
+      "pathPattern": "(^|/)server/db(\\.test)?\\.ts$"
+    }
+  ],
+  "cardTemplate": "Summarise the \"hub-storage\" domain: Hub ローカルの永続化。SQLite ハンドルとスキーマ、Cernere userId から Corpus external-id への解決。共有データの owner 識別子がここで確定する。"
+}

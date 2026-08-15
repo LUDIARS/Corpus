@@ -1,0 +1,15 @@
+{
+  "name": "plugin-examples",
+  "description": "プラグインパックの参考実装。CORPUS_PLUGIN_DIR で明示指定したときだけロードされ、Corpus 本体には含まれない。自前データ / Cernere 正本 / 外部コネクタの 3 類型を示すテンプレートで、派生 Hub はここを写して作る。",
+  "presetRules": [],
+  "templateRules": [],
+  "membership": [
+    {
+      "pathPattern": "(^|/)examples/corp-hub/[^/]+$"
+    },
+    {
+      "pathPattern": "(^|/)examples/corp-hub/[^/]+/[^/]+$"
+    }
+  ],
+  "cardTemplate": "Summarise the \"plugin-examples\" domain: プラグインパックの参考実装。CORPUS_PLUGIN_DIR で明示指定したときだけロードされ、Corpus 本体には含まれない。自前データ / Cernere 正本 / 外部コネクタの 3 類型を示すテンプレートで、派生 Hub はここを写して作る。"
+}

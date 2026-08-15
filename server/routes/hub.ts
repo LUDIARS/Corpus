@@ -130,11 +130,21 @@ export function makeHubRouter(
     const endpoint = manifest.data.find((d) => d.id === dataId);
     if (!endpoint) return c.json({ error: 'data_not_found' }, 404);
 
-    const token = await tokenProvider.getDownstreamToken(getUserToken(c), {
-      service: conn.id,
-      projectKey: manifest.cernereProjectKey ?? conn.id,
-      baseUrl: conn.baseUrl,
-    });
+    let token: string | null = null;
+    if (manifest.auth === 'cernere-project-token') {
+      token = await tokenProvider.getDownstreamToken(getUserToken(c), {
+        service: conn.id,
+        projectKey: manifest.cernereProjectKey ?? conn.id,
+        baseUrl: conn.baseUrl,
+      });
+      if (!token) {
+        // TokenProvider は発行障害を null で返す。ここで匿名リクエストへ劣化させると、
+        // downstream の設定次第で認可を迂回し得るため、認証必須サービスは fail closed。
+        return c.json({ error: 'downstream_token_unavailable' }, 502);
+      }
+    } else if (manifest.auth !== 'none') {
+      return c.json({ error: 'unsupported_downstream_auth' }, 502);
+    }
     const method = c.req.method;
     const headers: Record<string, string> = {};
     if (token) headers['authorization'] = `Bearer ${token}`;

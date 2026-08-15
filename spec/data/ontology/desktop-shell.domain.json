@@ -1,0 +1,12 @@
+{
+  "name": "desktop-shell",
+  "description": "Electron デスクトップ外殻。メインプロセスとレンダラ間の preload 境界。Web 版と同じフロントを OS アプリとして包むだけで、業務ロジックを持たない。",
+  "presetRules": [],
+  "templateRules": [],
+  "membership": [
+    {
+      "pathPattern": "(^|/)desktop/src/[^/]+$"
+    }
+  ],
+  "cardTemplate": "Summarise the \"desktop-shell\" domain: Electron デスクトップ外殻。メインプロセスとレンダラ間の preload 境界。Web 版と同じフロントを OS アプリとして包むだけで、業務ロジックを持たない。"
+}

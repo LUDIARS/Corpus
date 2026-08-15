@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   PassthroughTokenProvider,
   CernereProjectTokenProvider,
@@ -6,6 +6,11 @@ import {
 } from './tokens.ts';
 
 const target = { service: 'x', projectKey: 'x', baseUrl: 'http://localhost:9999' };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('PassthroughTokenProvider', () => {
   it('受信トークンをそのまま返す', async () => {
@@ -67,14 +72,48 @@ describe('CernereProjectTokenProvider', () => {
   });
 
   it('Cernere 不達なら null (throw しない)', async () => {
-    const tp = new CernereProjectTokenProvider('http://127.0.0.1:9');
+    const fetchImpl = vi.fn().mockRejectedValue(new Error('unreachable'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', fetchImpl);
+    const tp = new CernereProjectTokenProvider('http://cernere.test');
+    const unsafeTarget = { ...target, service: 'x\nforged' };
+    expect(await tp.getDownstreamToken('user-token', unsafeTarget)).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[corpus/tokens] project-token unavailable for "x\\nforged" (cernere unreachable)',
+    );
+    expect(String(warn.mock.calls)).not.toContain('user-token');
+    expect(warn.mock.calls[0]?.[0]).not.toContain('\n');
+  });
+
+  it('Cernere のエラー応答なら status を記録して null', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(null, { status: 503 })),
+    );
+    const tp = new CernereProjectTokenProvider('http://cernere.test');
     expect(await tp.getDownstreamToken('user-token', target)).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[corpus/tokens] project-token unavailable for "x" (503)',
+    );
+  });
+
+  it('成功応答に token が無ければ upstream 不正として null', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({})));
+    const tp = new CernereProjectTokenProvider('http://cernere.test');
+    expect(await tp.getDownstreamToken('user-token', target)).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[corpus/tokens] project-token unavailable for "x" (502)',
+    );
   });
 
   it('baseUrl 空のコネクタは Cernere を叩かず null (hub_url 必須・HS256 撤去済み)', async () => {
-    // cernereBaseUrl を不正値にしておき、 fetch されれば throw/失敗で露見する。
-    const tp = new CernereProjectTokenProvider('http://invalid.invalid:1');
+    const fetchImpl = vi.fn();
+    vi.stubGlobal('fetch', fetchImpl);
+    const tp = new CernereProjectTokenProvider('http://cernere.test');
     const noBase = { service: 'x', projectKey: 'x', baseUrl: '' };
     expect(await tp.getDownstreamToken('user-token', noBase)).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

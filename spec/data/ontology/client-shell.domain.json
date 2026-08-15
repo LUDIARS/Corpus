@@ -1,0 +1,21 @@
+{
+  "name": "client-shell",
+  "description": "ブラウザ側の外殻。API クライアント、アプリ起動と画面遷移、Cernere ログイン画面、フロント共通型。レンダラを載せる土台であり、描画そのものは持たない。",
+  "presetRules": [],
+  "templateRules": [],
+  "membership": [
+    {
+      "pathPattern": "(^|/)public/src/api\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)public/src/app\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)public/src/types\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)public/src/cernere-login(\\.test)?\\.(ts|tsx)$"
+    }
+  ],
+  "cardTemplate": "Summarise the \"client-shell\" domain: ブラウザ側の外殻。API クライアント、アプリ起動と画面遷移、Cernere ログイン画面、フロント共通型。レンダラを載せる土台であり、描画そのものは持たない。"
+}

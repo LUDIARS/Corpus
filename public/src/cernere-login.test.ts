@@ -17,7 +17,7 @@ describe('passkey redirect login', () => {
     expect(result.pathname).toBe('/composite/login');
     expect(result.searchParams.get('auth_mode')).toBe('passkey');
     const callback = new URL(result.searchParams.get('redirect_uri') ?? '');
-    expect(callback.origin).toBe('https://EducationLab.example');
+    expect(callback.origin).toBe('https://educationlab.example');
     expect(callback.searchParams.get('view')).toBe('surveys');
     expect(callback.searchParams.get('cernere_composite_state')).toBe('state-123');
   });
