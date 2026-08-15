@@ -34,6 +34,7 @@ import {
 } from './composite-ws-proxy.ts';
 import { writeDiagnostic } from './lib/logging.ts';
 import { resolveRequestOrigin } from './request-origin.ts';
+import { checkEdgeDevIdentity, makeEdgeHeaderGuard, parseAuthMode } from './edge-guard.ts';
 import { HubRegistry } from './hub/registry.ts';
 import { startHealthLoop } from './hub/aggregate.ts';
 import { readDiscoveryConfig, startDiscoveryLoop } from './hub/discovery.ts';
@@ -90,6 +91,29 @@ const CERNERE_FRONTEND_URL = AUTH_UI_MODE === 'passkey' && !NO_AUTH
 const AUDIENCE = NO_AUTH
   ? (process.env.CORPUS_PUBLIC_URL?.trim() || `http://localhost:${PORT}`)
   : requireEnv('CORPUS_PUBLIC_URL');
+// エッジ配置 (Cloudflare Access) の設定不備ガード。 認証ではない — DESIGN §16.6。
+const AUTH_MODE = (() => {
+  const value = parseAuthMode(process.env.CORPUS_AUTH_MODE);
+  if (value === null) {
+    console.error('[corpus] CORPUS_AUTH_MODE は composite または edge を指定してください。');
+    process.exit(1);
+  }
+  return value;
+})();
+const EDGE_DEV_BYPASS = (() => {
+  const check = checkEdgeDevIdentity({
+    value: process.env.CORPUS_EDGE_DEV_IDENTITY,
+    nodeEnv: process.env.NODE_ENV,
+    publicUrl: AUDIENCE,
+  });
+  // 開発用バイパスが本番設定に残っていたら、 起動を拒否する。 動いてから気づく形に
+  // すると、 このガードが防ごうとしている事故そのものになる。
+  if (check.reason) {
+    console.error(`[corpus] CORPUS_EDGE_DEV_IDENTITY は使用できません: ${check.reason}`);
+    process.exit(1);
+  }
+  return check.allowed;
+})();
 // external-id マッピングの issuer。 単一 Cernere 運用では CERNERE_BASE_URL を使う。
 const CERNERE_ISSUER =
   process.env.CORPUS_CERNERE_ISSUER?.trim() || CERNERE_BASE_URL;
@@ -164,6 +188,18 @@ async function main(): Promise<void> {
       allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     }),
   );
+
+  // エッジ配置の設定不備ガード。 Cloudflare Access が前段に居ない状態で origin が
+  // 晒されていることを、 誰かが踏んだ瞬間に検知する (DESIGN §16.6)。 認証ではない
+  // ため署名は見ず、 信頼判断は従来どおり Cernere が行う。
+  if (AUTH_MODE === 'edge') {
+    if (EDGE_DEV_BYPASS) {
+      console.log('[corpus] CORPUS_AUTH_MODE=edge — dev バイパス有効 (ヘッダ検査を省略)');
+    } else {
+      console.log('[corpus] CORPUS_AUTH_MODE=edge — Cf-Access-Jwt-Assertion 欠落を 401 で拒否');
+    }
+    app.use('*', makeEdgeHeaderGuard({ devBypass: EDGE_DEV_BYPASS }));
+  }
 
   // health は認証不要 — auth middleware より前に登録する
   app.get('/api/health', (c) =>
@@ -489,7 +525,13 @@ async function main(): Promise<void> {
     return c.redirect('/');
   });
 
-  const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
+  const server = serve({
+    fetch: app.fetch,
+    port: PORT,
+    // A dev identity skips the edge header check, so it must never listen beyond
+    // the local machine even if an advertised URL is misconfigured.
+    hostname: AUTH_MODE === 'edge' && EDGE_DEV_BYPASS ? '127.0.0.1' : undefined,
+  }, (info) => {
     console.log(`[corpus] listening on http://localhost:${info.port}`);
     console.log(`[corpus] data dir: ${DATA_DIR}`);
     console.log(`[corpus] cernere: ${NO_AUTH ? '(bypassed)' : CERNERE_BASE_URL}`);
