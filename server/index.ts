@@ -39,7 +39,7 @@ import { HubRegistry } from './hub/registry.ts';
 import { startHealthLoop } from './hub/aggregate.ts';
 import { readDiscoveryConfig, startDiscoveryLoop } from './hub/discovery.ts';
 import { makeTokenProvider, type TokenProvider } from './hub/tokens.ts';
-import { SelfConnector } from './connectors/builtin.ts';
+import { getCorpusDisplayName, SelfConnector } from './connectors/builtin.ts';
 import { makeHubRouter } from './routes/hub.ts';
 import { makeMeRouter } from './routes/me.ts';
 
@@ -406,7 +406,7 @@ async function main(): Promise<void> {
     const own = registry.ownManifest();
     return c.json({
       service: process.env.CORPUS_SERVICE_ID ?? 'corpus',
-      displayName: process.env.CORPUS_DISPLAY_NAME ?? 'Corpus',
+      displayName: getCorpusDisplayName(),
       version: '1.0.0',
       corpusApi: 1,
       health: '/api/health',

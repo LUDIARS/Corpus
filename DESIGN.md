@@ -132,6 +132,11 @@ interface ServiceConnector {
 - `scope` により frontend がローカル印 / マルチ印を出し分ける。
 - 接続先サービスが未稼働でも `health()` が `down` を返すだけで Corpus は起動する
   (= 段階的に各サービスが立ち上がる前提)。
+- hub 自身は組み込みの `SelfConnector` (id `corpus`, scope `local`) として一覧に出る。
+  **その `title` はログイン画面の名乗りと同様に派生 hub が差し替えられる** —
+  `CORPUS_DISPLAY_NAME` を見て、 未設定なら `Corpus`。 マニフェストの `displayName`
+  (§9.2) と同じ env を参照するので、 ステータス画面の表記と他 hub から見える名前が
+  食い違わない (例: GLab-Hub は `CORPUS_DISPLAY_NAME=GLab-Hub`)。
 
 ---
 
@@ -250,6 +255,8 @@ inject してから `index.ts` を読む。 `.env` 直書き / Excubitor inject 
 | `CORPUS_REMOTE_URL`  | ローカルアプリが叩くサーバサイドアプリ URL (マルチ情報用) |
 | `CORPUS_TOKEN_MODE`  | 参照先トークン伝播の方式 (D5) — `passthrough` か `cernere-project-token` を**明示必須**。 未設定は起動拒否 (無言フォールバック禁止)。 例外として dev 無認証 (`CORPUS_NO_AUTH=1`) のときだけ未設定で passthrough を既定とする |
 | `CORPUS_DISCOVERY_LOCKED` | `1` で起動後の discovery 設定変更を全拒否 (継承先固定化用) — §9.3 |
+| `CORPUS_SERVICE_ID`  | 自身のサービス識別子 (マニフェスト `service` / Cernere project key)。 未設定なら `corpus` |
+| `CORPUS_DISPLAY_NAME` | hub の名乗り。 マニフェストの `displayName` と ステータス画面の自己コネクタ表示名 (§4) に使う。 未設定なら `Corpus` |
 
 ### 9.3 起動後の連携先変更 (runtime discovery)
 

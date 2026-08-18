@@ -12,6 +12,11 @@ import type {
 
 const FETCH_TIMEOUT_MS = 5000;
 
+/** hub の表示名を環境変数から解決する。 */
+export function getCorpusDisplayName(): string {
+  return process.env.CORPUS_DISPLAY_NAME?.trim() || 'Corpus';
+}
+
 async function timedFetch(url: string, init?: RequestInit): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
@@ -80,10 +85,16 @@ export class HttpServiceConnector implements ServiceConnector {
   }
 }
 
-/** Corpus 自身を表すコネクタ。 常に up。 */
+/**
+ * Corpus 自身を表すコネクタ。 常に up。
+ *
+ * 表示名は派生 hub が名乗りを差し替えられるよう `CORPUS_DISPLAY_NAME` で可変。
+ * マニフェストの displayName (index.ts) と同じ env を見るので、 ステータス画面の
+ * 表記と他 hub から見た名前が食い違わない。
+ */
 export class SelfConnector implements ServiceConnector {
   readonly id = 'corpus';
-  readonly title = 'Corpus';
+  readonly title = getCorpusDisplayName();
   readonly scope: ConnectorScope = 'local';
   readonly baseUrl = '';
 
