@@ -224,7 +224,12 @@ async function main(): Promise<void> {
       service: 'corpus',
       // 旧 bundle も、実際にページを配信した同一 origin の proxy へ接続させる。
       cernereBaseUrl: requestOrigin,
-      cernereFrontendUrl: AUTH_UI_MODE === 'passkey' ? CERNERE_FRONTEND_URL : undefined,
+      // composite モードでも Cernere frontend の所在を公開する。 埋め込みの
+      // CompositeLogin に併設するパスキーは WebAuthn の RP ID を保つため
+      // Cernere origin のポップアップで行う必要があり、 hub 側の UI がその
+      // 起点 URL を知らないと導線を出せない。 未設定なら従来どおり省略する
+      // (受け手はキー不在をパスキー無効として扱う)。
+      cernereFrontendUrl: CERNERE_FRONTEND_URL || undefined,
       authUiMode: AUTH_UI_MODE,
       publicUrl: AUDIENCE,
     });

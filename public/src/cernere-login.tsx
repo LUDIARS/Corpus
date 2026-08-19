@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import {
   CompositeLogin,
+  CompositePasskeyPopup,
   type CompositeAuthApi,
   type CompositeAuthResponse,
   type DeviceAnomaly,
@@ -319,23 +320,26 @@ async function exchangeAuthCode(authCode: string): Promise<void> {
 
 function LoginHost({
   client,
+  cernereFrontendUrl,
   message,
 }: {
   client: CernereCompositeAuthClient;
+  cernereFrontendUrl?: string;
   message: string;
 }) {
   const [error, setError] = useState('');
+  const exchangeCode = (code: string) => {
+    setError('');
+    return exchangeAuthCode(code).catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    });
+  };
   return (
     <>
       {error && <p className="error">{error}</p>}
       <CompositeLogin
         authApi={client}
-        onAuthCode={(code) => {
-          setError('');
-          void exchangeAuthCode(code).catch((cause: unknown) => {
-            setError(cause instanceof Error ? cause.message : String(cause));
-          });
-        }}
+        onAuthCode={exchangeCode}
         labels={{
           title: 'Officina - EducationLab',
           subtitle: message || 'ログインはここから',
@@ -353,6 +357,15 @@ function LoginHost({
           deviceResend: 'コードを再送',
         }}
       />
+      {cernereFrontendUrl && (
+        <CompositePasskeyPopup
+          cernereUrl={cernereFrontendUrl}
+          onAuthCode={exchangeCode}
+          onError={(cause) => setError(cause.message)}
+          buttonLabel="パスキーでログイン"
+          className="primary"
+        />
+      )}
     </>
   );
 }
@@ -444,7 +457,13 @@ export function mountCernereLogin(
         return;
       }
       client = new CernereCompositeAuthClient();
-      root.render(<LoginHost client={client} message={message} />);
+      root.render(
+        <LoginHost
+          client={client}
+          cernereFrontendUrl={config.cernereFrontendUrl}
+          message={message}
+        />,
+      );
     } catch (cause) {
       if (!disposed) {
         root.render(
