@@ -39,4 +39,26 @@ describe('normalizeManifest', () => {
     expect(m?.panels).toHaveLength(1);
     expect(m?.panels[0]?.id).toBe('p');
   });
+
+  it('sharedUi を正規化し、 key/endpoint 欠けを落とす', () => {
+    const raw = {
+      service: 'cernere',
+      sharedUi: [
+        { key: 'cernere-auth-settings', endpoint: '/api/corpus/ui/auth-settings' },
+        { key: 'no-endpoint' },
+        { endpoint: '/no-key' },
+        { key: '', endpoint: '/empty-key' },
+        null,
+      ],
+    } as unknown as Partial<CorpusServiceManifest>;
+    const m = normalizeManifest(raw);
+    expect(m?.sharedUi).toEqual([
+      { key: 'cernere-auth-settings', endpoint: '/api/corpus/ui/auth-settings' },
+    ]);
+  });
+
+  it('sharedUi 未宣言なら空配列になる', () => {
+    const m = normalizeManifest({ service: 'x' } as Partial<CorpusServiceManifest>);
+    expect(m?.sharedUi).toEqual([]);
+  });
 });

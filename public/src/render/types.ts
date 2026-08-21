@@ -200,6 +200,39 @@ export interface CustomComponent {
 }
 
 /**
+ * Text — 操作もデータ取得も伴わない静的な案内文 (§13.4-10)。
+ *
+ * `stat` / `detail` は dataSource 必須で「取ってきた値を見せる」 部品なので、
+ * 固定文言の器にはならない。 注意書き・別窓口への誘導など、 descriptor に
+ * 書いた文字列をそのまま出す用途に使う。
+ */
+export interface TextComponent {
+  type: 'text';
+  value: string;
+  /** 見え方の強さ (既定 'default')。 */
+  tone?: 'default' | 'muted' | 'warning';
+  requires?: Requires;
+}
+
+/**
+ * Ref — 共通 UI 定義をキーで参照する (§13.4-11)。
+ *
+ * 参照先の実体は、 そのキーを所有するサービスが `sharedUi` として公開する
+ * descriptor 片。 **展開は Corpus hub (サーバ) 側で行い**、 レンダラへ届く時点では
+ * 実体へ置き換わっている。 レンダラが `ref` を受け取るのは展開に失敗した時だけで、
+ * その場合はエラー表示に落として周囲の描画を続ける。
+ *
+ * サーバ展開にしているのは、 `renderComponent` が同期関数だから。 クライアントで
+ * 解決すると再帰的な非同期化がレンダラ全体へ波及し、 ETag キャッシュ (ui-cache) も
+ * 参照先の変化を追えなくなる。
+ */
+export interface RefComponent {
+  type: 'ref';
+  key: string;
+  requires?: Requires;
+}
+
+/**
  * Dock layouter — ユーザがドラッグ操作で自由レイアウトできるサブパネル容器
  * (Corpus DESIGN.md §13.4-9)。 dockview-core を内蔵レンダラがラップする。
  *
@@ -262,6 +295,8 @@ export type ComponentDescriptor =
   | ActionButtonComponent
   | ModalComponent
   | CustomComponent
+  | TextComponent
+  | RefComponent
   | DockComponent;
 
 export interface SectionDescriptor {

@@ -41,6 +41,20 @@ export interface DeclarativePanel {
 /** マニフェストが宣言する hub UI パネル。 */
 export type ManifestPanel = ScriptPanel | DeclarativePanel;
 
+/**
+ * 共通 UI 定義の公開宣言 (DESIGN §13.4-11)。
+ *
+ * 他サービスの descriptor から `{ "type": "ref", "key": ... }` で参照される
+ * UI 片を、 所有サービスがキーと取得先の対で公開する。 実体の展開は
+ * Corpus hub が行う (server/hub/shared-ui.ts)。
+ */
+export interface ManifestSharedUi {
+  /** 参照キー。 サービス跨ぎで一意にするため所有サービス名を接頭辞にする慣習 (例 'cernere-auth-settings')。 */
+  key: string;
+  /** descriptor 片を返すサービス内のパス (例 '/api/corpus/ui/auth-settings')。 */
+  endpoint: string;
+}
+
 /** GET /.well-known/corpus-service.json のレスポンス。 */
 export interface CorpusServiceManifest {
   service: string;
@@ -52,6 +66,8 @@ export interface CorpusServiceManifest {
   health: string;
   data: ManifestDataEndpoint[];
   panels: ManifestPanel[];
+  /** このサービスが所有し、 他サービスへ参照させる共通 UI 定義。 */
+  sharedUi?: ManifestSharedUi[];
   /** 認証方式 — 'cernere-project-token' | 'none'。 */
   auth: string;
   /** Cernere の managed project key。 省略時は service を使う (D5 のトークン発行用)。 */
@@ -112,6 +128,17 @@ export function normalizeManifest(
             ? o.ui != null || typeof o.uiEndpoint === 'string'
             : typeof o.entry === 'string';
         })
+      : [],
+    sharedUi: Array.isArray(raw.sharedUi)
+      ? (raw.sharedUi as unknown[]).filter(
+          (u): u is ManifestSharedUi =>
+            !!u &&
+            typeof u === 'object' &&
+            typeof (u as Record<string, unknown>).key === 'string' &&
+            !!(u as Record<string, unknown>).key &&
+            typeof (u as Record<string, unknown>).endpoint === 'string' &&
+            !!(u as Record<string, unknown>).endpoint,
+        )
       : [],
     auth: typeof raw.auth === 'string' ? raw.auth : 'none',
     cernereProjectKey:

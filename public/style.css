@@ -255,6 +255,16 @@ button.primary:hover { filter: brightness(1.1); }
 .corpus-stat-label { font-size: 0.72rem; color: var(--muted); }
 .corpus-stat-value { font-size: 1.3rem; font-weight: 700; }
 
+/* 静的テキスト (§13.4-14) — 操作もデータ取得も伴わない案内文。 */
+.corpus-text {
+  margin: 0.4rem 0;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--fg);
+}
+.corpus-text--muted { color: var(--muted); font-size: 0.86rem; }
+.corpus-text--warning { color: var(--degraded); }
+
 .corpus-tab-bar { display: flex; gap: 0.3rem; margin-bottom: 0.6rem; flex-wrap: wrap; }
 .corpus-tab-btn {
   padding: 0.3rem 0.7rem;

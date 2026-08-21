@@ -41,6 +41,8 @@ import { readDiscoveryConfig, startDiscoveryLoop } from './hub/discovery.ts';
 import { makeTokenProvider, type TokenProvider } from './hub/tokens.ts';
 import { getCorpusDisplayName, SelfConnector } from './connectors/builtin.ts';
 import { makeHubRouter } from './routes/hub.ts';
+import { expandPanelRefs, isPanelDescriptor } from './hub/shared-ui-expand.ts';
+import { makeSharedUiResolver } from './hub/shared-ui-resolver.ts';
 import { makeMeRouter } from './routes/me.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -480,8 +482,24 @@ async function main(): Promise<void> {
       return c.json({ error: 'connector_error' }, 502);
     }
     if (!res.ok) return c.json({ error: 'ui_unavailable' }, 404);
-    const body = Buffer.from(await res.arrayBuffer());
-    const type = CONTENT_TYPES[extname(rest)] ?? 'application/octet-stream';
+    let body = Buffer.from(await res.arrayBuffer());
+    const upstreamType = res.headers.get('content-type') ?? '';
+    let type = CONTENT_TYPES[extname(rest)] ?? 'application/octet-stream';
+    // declarative descriptor は共通 UI 参照 (§13.4-11) を実体へ展開してから返す。
+    // JS バンドル等はそのまま中継する。 ETag は展開後の内容から算出するので、
+    // 参照先が変われば ETag も変わり、 クライアントのキャッシュが再検証で追随する。
+    if (upstreamType.includes('json')) {
+      type = 'application/json';
+      try {
+        const parsed: unknown = JSON.parse(body.toString('utf-8'));
+        if (isPanelDescriptor(parsed)) {
+          const expanded = await expandPanelRefs(parsed, makeSharedUiResolver(registry));
+          body = Buffer.from(JSON.stringify(expanded), 'utf-8');
+        }
+      } catch {
+        // 壊れた JSON は展開せずそのまま流す。 判断はクライアントに委ねる。
+      }
+    }
     // §15.4 Vite-P1: content hash を ETag にして条件付き取得を許す。
     // クライアントは ETag を WebStorage に保持し、 If-None-Match で再検証 → 304 で再利用。
     // 上流サービスが ETag を返さなくても Corpus 側で内容から算出する。

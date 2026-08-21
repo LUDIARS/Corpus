@@ -706,3 +706,71 @@ describe('custom component', () => {
     expect(err?.textContent ?? '').toMatch(/custom 読み込み失敗/);
   });
 });
+
+// ── text component (§13.4-10) ─────────────────────────────────────────────
+
+describe('text component', () => {
+  it('renders the declared value without touching ctx.data', async () => {
+    const host = mount();
+    const { ctx, calls } = makeCtx();
+    renderPanel(host, {
+      descriptorVersion: 1, title: 'P',
+      sections: [{ components: [{ type: 'text', value: '別窓口で本人確認が必要です。' }] }],
+    }, ctx);
+    await flush();
+    const p = host.querySelector('.corpus-text');
+    expect(p?.textContent).toBe('別窓口で本人確認が必要です。');
+    // 静的テキストなのでデータ取得は起きない
+    expect(calls).toHaveLength(0);
+  });
+
+  it('maps tone to a modifier class, default tone has none', async () => {
+    const host = mount();
+    const { ctx } = makeCtx();
+    renderPanel(host, {
+      descriptorVersion: 1, title: 'P',
+      sections: [{ components: [
+        { type: 'text', value: 'plain' },
+        { type: 'text', value: 'quiet', tone: 'muted' },
+        { type: 'text', value: 'careful', tone: 'warning' },
+      ] }],
+    }, ctx);
+    await flush();
+    const nodes = [...host.querySelectorAll('.corpus-text')];
+    expect(nodes.map((n) => n.className)).toEqual([
+      'corpus-text',
+      'corpus-text corpus-text--muted',
+      'corpus-text corpus-text--warning',
+    ]);
+  });
+
+  it('is hidden from non-admin when requires=admin', async () => {
+    const host = mount();
+    const { ctx } = makeCtx({ isAdmin: false });
+    renderPanel(host, {
+      descriptorVersion: 1, title: 'P',
+      sections: [{ components: [
+        { type: 'text', value: '管理者向け', requires: 'admin' },
+      ] }],
+    }, ctx);
+    await flush();
+    expect(host.querySelector('.corpus-text')).toBeNull();
+  });
+});
+
+// ── ref component (§13.4-11) ──────────────────────────────────────────────
+
+describe('ref component', () => {
+  it('renders an error when an unexpanded ref reaches the renderer', async () => {
+    // 正常系では hub が実体へ展開済み。 ここへ来るのは展開に失敗した時だけ。
+    const host = mount();
+    const { ctx } = makeCtx();
+    renderPanel(host, {
+      descriptorVersion: 1, title: 'P',
+      sections: [{ components: [{ type: 'ref', key: 'cernere-auth-settings' }] }],
+    }, ctx);
+    await flush();
+    const err = host.querySelector('.corpus-error');
+    expect(err?.textContent ?? '').toContain('cernere-auth-settings');
+  });
+});

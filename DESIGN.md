@@ -359,7 +359,7 @@ descriptor は `Panel → Section[] → Component[]` の階層。
 }
 ```
 
-### 13.4 ComponentDescriptor — 9 種
+### 13.4 ComponentDescriptor
 
 `type` で判別。 共通フィールド: `requires?: "admin"` (admin のみ表示・実行)。
 
@@ -418,10 +418,16 @@ PATCH する (一覧上のインライン編集)。
   "rowActions": [ /* ActionDescriptor */ ] }
 ```
 
-**5. レイアウト (`section` / `tabs`)** — 入れ子コンテナ
+**5. レイアウト (`section` / `tabs` / `grid` / `stack` / `modal`)** — 入れ子コンテナ
 ```jsonc
 { "type": "section", "title": "...", "components": [ /* ... */ ] }
 { "type": "tabs", "tabs": [ { "label": "一覧", "components": [ /* ... */ ] } ] }
+// grid / stack は「業務 (descriptor)」 と「並べ方」 を分離する layouter。
+// PC/スマホの出し分けは Corpus 側が持ち、 サービスは列数だけ宣言する。
+{ "type": "grid",  "columns": 3, "mobileColumns": 1, "gap": 0.6, "components": [ /* ... */ ] }
+{ "type": "stack", "direction": "row", "responsive": true, "wrap": true, "components": [ /* ... */ ] }
+// modal は trigger ボタン 1 つを描き、 押すと <dialog> の中へ子を描く。
+{ "type": "modal", "label": "詳細設定", "title": "...", "variant": "ghost", "components": [ /* ... */ ] }
 ```
 
 **6. `stat`** — 数値サマリ
@@ -481,6 +487,33 @@ PATCH する (一覧上のインライン編集)。
   - DockLayoutNode 内で panel ごとの **専用ツールバー** を宣言する仕組み (将来課題)
   - panel 間 drag drop でのデータ受け渡し (将来 — まずは独立 panel として並列表示のみ)
   - 複数 user 間での layout 同期 (`dock-layout` API の用途次第)
+
+**10. `text`** — 静的な案内文
+```jsonc
+{ "type": "text", "value": "復旧は別窓口での本人確認が必要です。", "tone": "muted" }
+```
+`tone` は `default` (既定) / `muted` / `warning`。 `stat` と `detail` は
+`dataSource` 必須なので、 データを伴わない固定文言はこちらを使う。
+
+**11. `ref`** — 共通 UI 定義をキーで参照
+```jsonc
+{ "type": "ref", "key": "cernere-auth-settings" }
+```
+参照先の実体は、 そのキーを所有するサービスがマニフェストの `sharedUi[]` で公開する
+UI 片 (`{ title?, components[] }`)。 サービス横断で同じ UI を一度だけ定義し、
+各サービスはキー参照で使い回す (§13.4-11)。
+
+- **展開は Corpus hub (サーバ) 側で行う。** `/hub-ui/<service>/<path>` が
+  descriptor を中継する時点で実体へ置き換え、 **展開後の内容から ETag を算出**する。
+  参照先が変われば ETag も変わるので、 クライアントのキャッシュが再検証で追随する
+- レンダラ側で解決しないのは、 `renderComponent` が同期関数だから。 クライアント
+  解決にすると再帰的な非同期化がレンダラ全体へ波及する
+- 展開後は `section` component になり、 UI 片の `title` が見出しになる。
+  参照側が付けた `requires` は展開後の section へ引き継がれる
+- 循環参照・未解決キー・上流サービス停止・深さ上限超過は、 **その位置だけ**
+  `text` (tone=warning) のエラー表示に落とし、 パネル全体は描き続ける
+- 同じキーを 2 つのサービスが宣言した場合は先勝ち。 起動順で実体が入れ替わらないよう
+  黙って上書きせず警告する
 
 ### 13.5 データ束縛
 
@@ -552,6 +585,22 @@ PATCH する (一覧上のインライン編集)。
 - `list` item の `edit` — 一覧上のインライン編集フォーム。 method は PUT/PATCH
   両対応 (Actio は PUT、 Aedilis は PATCH。 §13.4-1)
 - ActionDescriptor の `kind: "toggle"` — on/off ステート操作 (§13.6)
+
+### 13.10 Cernere 認証設定パネル由来のスキーマ反映 (2026-08-21)
+
+`Cernere/spec/feature/corpus-frontend-ui.md` §4.4 で「Corpus を継承する全サービス
+ビューに Cernere 設定 (認証設定) を必ず置く」 と決めた際、 それを descriptor で
+書けないことが判明し、 2 点を §13.4 に追加した:
+
+- `text` — 操作もデータ取得も伴わない静的な案内文 (§13.4-10)。
+  復旧経路の案内のように、 固定文言だけを置きたい位置で必要になった。
+  `stat` / `detail` は `dataSource` 必須で代用できない
+- `ref` — 共通 UI 定義のキー参照 (§13.4-11)。
+  認証設定の正本を Cernere 1 箇所に置き、 各サービスは写経せず参照するために必要。
+  展開は hub 側 (`server/hub/shared-ui-*.ts`)、 公開はマニフェストの `sharedUi[]`
+
+あわせて、 実装済みだが §13.4 に記載が無かった `grid` / `stack` / `modal` を
+レイアウト項へ追記した。
 
 ## 14. オープン論点
 

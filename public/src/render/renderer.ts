@@ -1,6 +1,6 @@
 // Corpus 宣言的レンダラ (Corpus DESIGN.md §13)。
 //
-// PanelDescriptor + RenderContext を受け取り、 9 component を DOM に描く。
+// PanelDescriptor + RenderContext を受け取り、 ComponentDescriptor を DOM に描く。
 // 描画先サービスに依存しない自己完結モジュール (§13.7)。
 
 import { createDockview, type DockviewApi } from 'dockview-core';
@@ -18,9 +18,11 @@ import type {
   ModalComponent,
   PaginationSpec,
   PanelDescriptor,
+  RefComponent,
   RenderContext,
   StackComponent,
   TableComponent,
+  TextComponent,
 } from './types.ts';
 
 // ── DOM / 値ヘルパ ──────────────────────────────────────────────────────────
@@ -655,6 +657,24 @@ function renderStat(
   return root;
 }
 
+/**
+ * 静的テキスト (§13.4-10)。 データ取得を伴わないので同期で描き切る。
+ */
+function renderText(comp: TextComponent): HTMLElement {
+  const tone = comp.tone ?? 'default';
+  const cls = tone === 'default' ? 'corpus-text' : `corpus-text corpus-text--${tone}`;
+  return el('p', cls, comp.value);
+}
+
+/**
+ * 未展開の ref (§13.4-11)。 正常系では hub 側で実体に置き換わっているため、
+ * ここに来るのは展開に失敗した時だけ。 パネル全体を落とさず、 その位置だけ
+ * エラー表示にして周囲の描画を続ける。
+ */
+function renderUnresolvedRef(comp: RefComponent): HTMLElement {
+  return el('p', 'corpus-error', `共通 UI '${comp.key}' を解決できませんでした。`);
+}
+
 function renderCustom(comp: ComponentDescriptor & { type: 'custom' }): HTMLElement {
   const host = el('div', 'corpus-custom');
   void (async () => {
@@ -902,6 +922,10 @@ function renderComponent(
     }
     case 'custom':
       return renderCustom(comp);
+    case 'text':
+      return renderText(comp);
+    case 'ref':
+      return renderUnresolvedRef(comp);
     case 'modal':
       return renderModal(comp, ctx);
     case 'grid':

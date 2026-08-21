@@ -24,4 +24,13 @@ describe('style.css responsive contract', () => {
       /@media \(min-width: 640px\)\s*{\s*\.corpus-stack\.responsive\s*{[^}]*flex-direction/,
     );
   });
+
+  it('text component tones are declared in style.css', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const css = await readFile(new URL('../../style.css', import.meta.url), 'utf-8');
+    // renderer が付けるクラスと style.css の宣言がずれると無地の文字列になる。
+    expect(css).toMatch(/\.corpus-text\s*{/);
+    expect(css).toMatch(/\.corpus-text--muted\s*{/);
+    expect(css).toMatch(/\.corpus-text--warning\s*{/);
+  });
 });
