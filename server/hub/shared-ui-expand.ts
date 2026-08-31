@@ -53,10 +53,20 @@ export async function expandPanelRefs(
   descriptor: PanelDescriptor,
   resolve: SharedUiResolver,
 ): Promise<PanelDescriptor> {
+  // 1 descriptor 内で同じ key が複数回現れても、 所有サービスへの取得は 1 回にする。
+  // 兄弟参照を並列展開するため、 値ではなく進行中の Promise 自体を共有する。
+  const resolved = new Map<string, Promise<SharedUiFragment | null>>();
+  const resolveOnce: SharedUiResolver = (key) => {
+    const existing = resolved.get(key);
+    if (existing) return existing;
+    const pending = Promise.resolve().then(() => resolve(key));
+    resolved.set(key, pending);
+    return pending;
+  };
   const sections = await Promise.all(
     descriptor.sections.map(async (section) => ({
       ...section,
-      components: await expandList(section.components, resolve, [], 0),
+      components: await expandList(section.components, resolveOnce, [], 0),
     })),
   );
   return { ...descriptor, sections };

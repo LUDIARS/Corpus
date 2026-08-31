@@ -9,6 +9,8 @@ import {
 import { getUserToken, requireAdmin } from '../auth.ts';
 import { buildOverview } from '../hub/aggregate.ts';
 import type { HubRegistry } from '../hub/registry.ts';
+import { expandPanelRefs, isPanelDescriptor } from '../hub/shared-ui-expand.ts';
+import { makeSharedUiResolver } from '../hub/shared-ui-resolver.ts';
 import type { ConnectorInfo } from '../hub/types.ts';
 import type { TokenProvider } from '../hub/tokens.ts';
 import {
@@ -90,28 +92,45 @@ export function makeHubRouter(
 
   // discovery / 手動登録の全サービスとそのマニフェスト (frontend が
   // データタブ・パネルを描くために使う)
-  r.get('/services', (c) => {
-    const services = registry.listConnectors().map((conn) => {
-      const m = conn.getManifest?.() ?? null;
-      return {
-        id: conn.id,
-        title: conn.title,
-        scope: conn.scope,
-        manifest: m
-          ? {
-              displayName: m.displayName,
-              version: m.version,
-              auth: m.auth,
-              data: m.data.map((d) => ({
-                id: d.id,
-                title: d.title ?? d.id,
-                scope: d.scope,
-              })),
-              panels: m.panels,
-            }
-          : null,
-      };
-    });
+  r.get('/services', async (c) => {
+    const resolveSharedUi = makeSharedUiResolver(registry);
+    const services = await Promise.all(
+      registry.listConnectors().map(async (conn) => {
+        const m = conn.getManifest?.() ?? null;
+        return {
+          id: conn.id,
+          title: conn.title,
+          scope: conn.scope,
+          manifest: m
+            ? {
+                displayName: m.displayName,
+                version: m.version,
+                auth: m.auth,
+                data: m.data.map((d) => ({
+                  id: d.id,
+                  title: d.title ?? d.id,
+                  scope: d.scope,
+                })),
+                // uiEndpoint は /hub-ui proxy で展開される。 inline ui は proxy を
+                // 通らないため、 サービス一覧に載せる前に同じ server-side 展開を行う。
+                panels: await Promise.all(
+                  m.panels.map(async (panel) =>
+                    panel.kind === 'declarative' && isPanelDescriptor(panel.ui)
+                      ? {
+                          ...panel,
+                          // 外部 manifest は信頼境界の外。 深部が不正でもサービス一覧全体を
+                          // 500 にせず、 従来どおり元 descriptor を返して表示側へ委ねる。
+                          ui: await expandPanelRefs(panel.ui, resolveSharedUi)
+                            .catch(() => panel.ui),
+                        }
+                      : panel
+                  ),
+                ),
+              }
+            : null,
+        };
+      }),
+    );
     return c.json({ services });
   });
 

@@ -119,6 +119,7 @@ describe('expandPanelRefs', () => {
     );
     expect(JSON.stringify(out)).not.toContain('循環');
     expect(comps(out)).toHaveLength(2);
+    expect(resolve).toHaveBeenCalledTimes(1);
   });
 
   it('degrades an unresolved key without throwing', async () => {

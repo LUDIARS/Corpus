@@ -255,7 +255,7 @@ button.primary:hover { filter: brightness(1.1); }
 .corpus-stat-label { font-size: 0.72rem; color: var(--muted); }
 .corpus-stat-value { font-size: 1.3rem; font-weight: 700; }
 
-/* 静的テキスト (§13.4-14) — 操作もデータ取得も伴わない案内文。 */
+/* 静的テキスト (§13.4-10) — 操作もデータ取得も伴わない案内文。 */
 .corpus-text {
   margin: 0.4rem 0;
   font-size: 0.92rem;

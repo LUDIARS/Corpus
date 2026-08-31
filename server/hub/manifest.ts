@@ -46,7 +46,7 @@ export type ManifestPanel = ScriptPanel | DeclarativePanel;
  *
  * 他サービスの descriptor から `{ "type": "ref", "key": ... }` で参照される
  * UI 片を、 所有サービスがキーと取得先の対で公開する。 実体の展開は
- * Corpus hub が行う (server/hub/shared-ui.ts)。
+ * Corpus hub が行う (server/hub/shared-ui-expand.ts)。
  */
 export interface ManifestSharedUi {
   /** 参照キー。 サービス跨ぎで一意にするため所有サービス名を接頭辞にする慣習 (例 'cernere-auth-settings')。 */

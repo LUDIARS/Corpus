@@ -41,6 +41,7 @@ function makeApp(
 ): Hono {
   const registry = {
     getConnector: (id: string) => (id === connector.id ? connector : undefined),
+    listConnectors: () => [connector],
   } as unknown as HubRegistry;
   const app = new Hono();
   app.use('*', async (c, next) => {
@@ -144,5 +145,48 @@ describe('hub downstream authentication', () => {
     });
     expect(tokenProvider.getDownstreamToken).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe('hub service manifests', () => {
+  it('expands refs in inline declarative panels before returning services', async () => {
+    const fetchImpl = vi
+      .fn<ServiceConnector['fetch']>()
+      .mockResolvedValue(Response.json({
+        title: 'Shared settings',
+        components: [{ type: 'text', value: 'shared body' }],
+      }));
+    const connector = makeConnector('none', fetchImpl);
+    const manifest = connector.getManifest?.();
+    if (!manifest) throw new Error('manifest is required');
+    manifest.sharedUi = [{ key: 'shared-settings', endpoint: '/shared-settings' }];
+    manifest.panels = [{
+      id: 'inline',
+      kind: 'declarative',
+      title: 'Inline',
+      ui: {
+        descriptorVersion: 1,
+        title: 'Inline',
+        sections: [{ components: [{ type: 'ref', key: 'shared-settings' }] }],
+      },
+    }];
+    const app = makeApp(connector, makeTokenProvider(null));
+
+    const response = await app.request('http://localhost/api/hub/services');
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      services: Array<{ manifest: { panels: Array<{ ui: unknown }> } }>;
+    };
+    expect(body.services[0]?.manifest.panels[0]?.ui).toMatchObject({
+      sections: [{
+        components: [{
+          type: 'section',
+          title: 'Shared settings',
+          components: [{ type: 'text', value: 'shared body' }],
+        }],
+      }],
+    });
+    expect(fetchImpl).toHaveBeenCalledWith('/shared-settings');
   });
 });
