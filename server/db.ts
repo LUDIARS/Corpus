@@ -47,11 +47,16 @@ CREATE INDEX IF NOT EXISTS external_id_map_eid ON external_id_map(external_id);
 export function openDb(dbPath: string): CorpusDb {
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.exec(SCHEMA);
-  // ここで将来 ALTER ADD COLUMN → 直後に CREATE INDEX を冪等発行する
-  return db;
+  try {
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    db.exec(SCHEMA);
+    // ここで将来 ALTER ADD COLUMN → 直後に CREATE INDEX を冪等発行する
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 /** display name を Cernere の解決結果でキャッシュする。 */

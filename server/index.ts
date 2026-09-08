@@ -44,6 +44,8 @@ import { makeHubRouter } from './routes/hub.ts';
 import { expandPanelRefs, isPanelDescriptor } from './hub/shared-ui-expand.ts';
 import { makeSharedUiResolver } from './hub/shared-ui-resolver.ts';
 import { makeMeRouter } from './routes/me.ts';
+import { CleanupScope, type CorpusRuntime } from './lifecycle.ts';
+import { ownHttpServer } from './http-lifetime.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -54,7 +56,7 @@ function requireEnv(name: string): string {
     console.error(
       `[corpus] ${name} が未設定です。 Infisical / .env.secrets / .env / host env のいずれかで指定してください。`,
     );
-    process.exit(1);
+    throw new Error(`Missing required environment variable: ${name}`);
   }
   return v.trim();
 }
@@ -83,7 +85,7 @@ const AUTH_UI_MODE = (() => {
   const value = process.env.CORPUS_AUTH_UI_MODE?.trim() || 'composite';
   if (value !== 'composite' && value !== 'passkey') {
     console.error('[corpus] CORPUS_AUTH_UI_MODE は composite または passkey を指定してください。');
-    process.exit(1);
+    throw new Error('Invalid CORPUS_AUTH_UI_MODE');
   }
   return value;
 })();
@@ -98,7 +100,7 @@ const AUTH_MODE = (() => {
   const value = parseAuthMode(process.env.CORPUS_AUTH_MODE);
   if (value === null) {
     console.error('[corpus] CORPUS_AUTH_MODE は composite または edge を指定してください。');
-    process.exit(1);
+    throw new Error('Invalid CORPUS_AUTH_MODE');
   }
   return value;
 })();
@@ -112,7 +114,7 @@ const EDGE_DEV_BYPASS = (() => {
   // すると、 このガードが防ごうとしている事故そのものになる。
   if (check.reason) {
     console.error(`[corpus] CORPUS_EDGE_DEV_IDENTITY は使用できません: ${check.reason}`);
-    process.exit(1);
+    throw new Error('Invalid CORPUS_EDGE_DEV_IDENTITY');
   }
   return check.allowed;
 })();
@@ -135,18 +137,22 @@ const CONTENT_TYPES: Record<string, string> = {
   '.json': 'application/json; charset=utf-8',
 };
 
-async function main(): Promise<void> {
+export async function startCorpus(): Promise<CorpusRuntime> {
+  const scope = new CleanupScope();
+  try {
   const db = openDb(DB_PATH);
+  scope.defer(() => { db.close(); });
   if (NO_AUTH) {
     console.log('[corpus] CORPUS_NO_AUTH=1 — Cernere 認証 bypass、 dev identity で起動');
   } else {
-    startAuth({
+    const stopAuth = startAuth({
       cernereBaseUrl: CERNERE_BASE_URL,
       adminIds: ADMIN_IDS,
       db,
       issuer: CERNERE_ISSUER,
       cookieSecure: new URL(AUDIENCE).protocol === 'https:',
     });
+    scope.defer(stopAuth);
   }
 
   const projectAuth = NO_AUTH ? null : new ProjectAuthClient({
@@ -154,7 +160,10 @@ async function main(): Promise<void> {
     clientId: requireEnv('CERNERE_PROJECT_CLIENT_ID'),
     clientSecret: requireEnv('CERNERE_PROJECT_CLIENT_SECRET'),
   });
-  if (projectAuth) await projectAuth.connect();
+  if (projectAuth) {
+    scope.defer(() => projectAuth.close());
+    await projectAuth.connect();
+  }
 
   // 認証トークン伝播 (D5) — プラグインの setup に渡す CorpusContext.tokenProvider
   // になるため、 プラグインロードより前に組み立てる。 plugin proxy 経路と
@@ -171,7 +180,7 @@ async function main(): Promise<void> {
     );
   } catch (e) {
     console.error(`[corpus] ${(e as Error).message}`);
-    process.exit(1);
+    throw e;
   }
 
   // hub 機構: 組み込みコネクタ + プラグインパック
@@ -385,7 +394,9 @@ async function main(): Promise<void> {
       if (!base) continue;
       let versions: Record<string, number>;
       try {
-        const r = await fetch(`${base}/api/corpus/ui-versions`);
+        const r = await fetch(`${base}/api/corpus/ui-versions`, {
+          signal: AbortSignal.any([hmrLifetime.signal, AbortSignal.timeout(5000)]),
+        });
         if (!r.ok) continue;
         versions = (await r.json()) as Record<string, number>;
       } catch {
@@ -397,14 +408,27 @@ async function main(): Promise<void> {
         lastUiVersions.set(mapKey, version);
         if (prev !== undefined && prev !== version) {
           const data = JSON.stringify({ service: conn.id, key, version });
-          for (const s of hmrClients) void s.writeSSE({ data, event: 'ui-changed' });
+          await Promise.allSettled([...hmrClients].map((s) => s.writeSSE({ data, event: 'ui-changed' })));
           console.log(`[corpus] HMR: ${conn.id}/${key} → v${version}`);
         }
       }
     }
   }
-  const hmrTimer = setInterval(() => void pollUiVersions(), 1500);
+  const hmrLifetime = new AbortController();
+  let hmrPending: Promise<void> | undefined;
+  const hmrTimer = setInterval(() => {
+    if (hmrPending) return;
+    hmrPending = pollUiVersions().catch(() => {
+      writeDiagnostic('lifecycle.hmr', { event: 'poll_failed' });
+    }).finally(() => { hmrPending = undefined; });
+  }, 1500);
   hmrTimer.unref?.();
+  scope.defer(async () => {
+    clearInterval(hmrTimer);
+    hmrLifetime.abort();
+    await hmrPending;
+    hmrClients.clear();
+  });
 
   // 自身のサービスマニフェスト (D6) — 別の Corpus から参照される時に使う。
   // data[] はプラグインが registerData で宣言した分、 panels[] はプラグインの
@@ -436,6 +460,7 @@ async function main(): Promise<void> {
   const discoveryController = startDiscoveryLoop(registry, discoveryCfg, {
     locked: discoveryLocked,
   });
+  scope.defer(() => discoveryController.stop());
   app.route(
     '/api/hub',
     makeHubRouter({ registry, db, tokenProvider, discoveryController }),
@@ -565,6 +590,7 @@ async function main(): Promise<void> {
     console.log(`[corpus] modules: ${registry.listModules().map((m) => m.id).join(', ') || '(none)'}`);
     console.log(`[corpus] connectors: ${registry.listConnectors().map((c) => c.id).join(', ') || '(none)'}`);
   });
+  await ownHttpServer(server as Server, scope);
   if (!NO_AUTH && AUTH_UI_MODE === 'composite') {
     attachCompositeWebSocketProxy(
       server as Server,
@@ -576,8 +602,12 @@ async function main(): Promise<void> {
   );
 }
 
-  startHealthLoop(registry, db);
+  scope.defer(startHealthLoop(registry, db));
   // discovery loop は上で controller 経由で start 済 — ここでは何もしない。
+  return { close: () => scope.close() };
+  } catch (error) {
+    try { await scope.close(); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Corpus startup and cleanup failed'); }
+    throw error;
+  }
 }
-
-void main();

@@ -43,6 +43,8 @@ export class ProjectAuthClient {
   private ws: WsLike | null = null;
   private connectPromise: Promise<void> | null = null;
   private readonly pending = new Map<string, PendingRequest>();
+  private closed = false;
+  private readonly lifetime = new AbortController();
 
   constructor(private readonly config: ProjectAuthClientConfig) {
     if (!config.cernereBaseUrl.trim()) throw new Error('cernereBaseUrl is required');
@@ -66,6 +68,9 @@ export class ProjectAuthClient {
   }
 
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.lifetime.abort();
     this.rejectPending(new Error('Cernere project auth client closed'));
     this.ws?.close(1000, 'closed');
     this.ws = null;
@@ -107,17 +112,18 @@ export class ProjectAuthClient {
   }
 
   private async ensureConnected(): Promise<void> {
+    if (this.closed) throw new Error('Cernere project auth client closed');
+    if (this.connectPromise) { await this.connectPromise; return; }
     if (this.ws?.readyState === WS_OPEN) return;
-    if (!this.connectPromise) {
-      this.connectPromise = this.openProjectSession().finally(() => {
-        this.connectPromise = null;
-      });
-    }
+    this.connectPromise = this.openProjectSession().finally(() => {
+      this.connectPromise = null;
+    });
     await this.connectPromise;
   }
 
   private async openProjectSession(): Promise<void> {
     const token = await this.fetchProjectToken();
+    if (this.closed) throw new Error('Cernere project auth client closed');
     const wsUrl = `${this.cernereBaseUrl.replace(/^http/i, 'ws')}/ws/project`;
     await new Promise<void>((resolve, reject) => {
       const ws = this.createWebSocket(wsUrl, ['bearer', token]);
@@ -132,6 +138,7 @@ export class ProjectAuthClient {
       timer.unref?.();
       this.ws = ws;
       ws.onmessage = (event) => {
+        if (this.closed || this.ws !== ws) return;
         const message = parseMessage(event.data);
         if (!message) return;
         if (message.type === 'connected' && !settled) {
@@ -147,15 +154,18 @@ export class ProjectAuthClient {
         this.handleResponse(message);
       };
       ws.onerror = () => {
-        if (settled) return;
+        if (settled) { ws.close(); return; }
         settled = true;
         clearTimeout(timer);
         this.ws = null;
+        ws.close();
         reject(new Error('Cernere project WebSocket connection failed'));
       };
       ws.onclose = (event) => {
-        this.ws = null;
-        this.rejectPending(new Error(`Cernere project WebSocket closed (${event.code})`));
+        if (this.ws === ws) {
+          this.ws = null;
+          this.rejectPending(new Error(`Cernere project WebSocket closed (${event.code})`));
+        }
         if (!settled) {
           settled = true;
           clearTimeout(timer);
@@ -167,6 +177,7 @@ export class ProjectAuthClient {
 
   private async fetchProjectToken(): Promise<string> {
     const response = await this.fetchImpl(`${this.cernereBaseUrl}/api/auth/login`, {
+      signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(this.requestTimeoutMs)]),
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({

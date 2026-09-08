@@ -62,7 +62,7 @@ const REFRESH_COOKIE = 'cernere_refresh_token';
 const ACCESS_COOKIE_MAX_AGE_SECONDS = 55 * 60;
 const REFRESH_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
-export function startAuth(opts: AuthOptions): void {
+export function startAuth(opts: AuthOptions): () => void {
   optsRef = { ...opts, cernereBaseUrl: opts.cernereBaseUrl.replace(/\/+$/, '') };
   // 期限切れキャッシュの定期 sweep
   const timer = setInterval(() => {
@@ -70,6 +70,12 @@ export function startAuth(opts: AuthOptions): void {
     for (const [k, v] of cache) if (v.expiresAt <= now) cache.delete(k);
   }, CACHE_TTL_MS);
   timer.unref?.();
+  return () => {
+    clearInterval(timer);
+    optsRef = null;
+    cache.clear();
+    refreshInFlight.clear();
+  };
 }
 
 /** 生トークンをキャッシュキーにしないための短い指紋。 */
@@ -83,11 +89,12 @@ function fingerprint(token: string): string {
  */
 async function verifyToken(token: string): Promise<AuthIdentity | null> {
   if (!optsRef) return null;
+  const owner = optsRef;
   const key = fingerprint(token);
   const cached = cache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.identity;
   try {
-    const res = await fetch(`${optsRef.cernereBaseUrl}/api/auth/me`, {
+    const res = await fetch(`${owner.cernereBaseUrl}/api/auth/me`, {
       headers: { authorization: `Bearer ${token}` },
     });
     if (!res.ok) return null;
@@ -96,14 +103,15 @@ async function verifyToken(token: string): Promise<AuthIdentity | null> {
       name?: string;
       role?: string;
     };
-    if (!u.id) return null;
+    // shutdown / 再設定後は、 旧 optsRef の db / issuer を触らずに捨てる。
+    if (!u.id || optsRef !== owner) return null;
     const identity: AuthIdentity = {
       userId: u.id,
-      externalId: resolveExternalId(optsRef.db, optsRef.issuer, u.id),
+      externalId: resolveExternalId(owner.db, owner.issuer, u.id),
       role: typeof u.role === 'string' ? u.role : 'general',
       displayName: typeof u.name === 'string' ? u.name : null,
       projectKey: null,
-      isAdmin: optsRef.adminIds.has(u.id),
+      isAdmin: owner.adminIds.has(u.id),
     };
     cache.set(key, { identity, expiresAt: Date.now() + CACHE_TTL_MS });
     return identity;

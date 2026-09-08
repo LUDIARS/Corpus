@@ -6,6 +6,7 @@
 import type { CorpusDb } from '../db.ts';
 import type { HubRegistry } from './registry.ts';
 import type { ConnectorHealth, ConnectorInfo } from './types.ts';
+import { writeDiagnostic } from '../lib/logging.ts';
 
 const HEALTH_TIMEOUT_MS = 5000;
 
@@ -84,8 +85,16 @@ export function startHealthLoop(
   registry: HubRegistry,
   db: CorpusDb,
   intervalMs = 60_000,
-): void {
-  void runHealthChecks(registry, db);
-  const timer = setInterval(() => void runHealthChecks(registry, db), intervalMs);
+): () => Promise<void> {
+  let pending: Promise<unknown> | undefined;
+  const run = (): void => {
+    if (pending) return;
+    pending = runHealthChecks(registry, db).catch(() => {
+      writeDiagnostic('lifecycle.health', { event: 'poll_failed' });
+    }).finally(() => { pending = undefined; });
+  };
+  run();
+  const timer = setInterval(run, intervalMs);
   timer.unref?.();
+  return async () => { clearInterval(timer); await pending; };
 }
