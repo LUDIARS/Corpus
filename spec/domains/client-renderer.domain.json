@@ -5,7 +5,7 @@
   "templateRules": [],
   "membership": [
     {
-      "pathPattern": "(^|/)public/src/render/[^/]+$"
+      "pathPattern": "(^|/)public/src/render/"
     }
   ],
   "cardTemplate": "Summarise the \"client-renderer\" domain: 宣言的 UI レンダラ。サーバから届いた UI 記述を DOM へ描画し、dock / modal / pagination のレイアウトと描画キャッシュを扱う。画面の見た目はここが単独で決め、業務ロジックを持たない。"
