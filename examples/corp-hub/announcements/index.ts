@@ -87,6 +87,52 @@ const announcements: CorpusModule = {
       return c.json({ deleted: id });
     });
 
+    ctx.registerCapability({
+      id: 'list_announcements',
+      title: 'お知らせ一覧',
+      description: '社内のお知らせを新しい順に取得します。',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
+      },
+      readOnly: true,
+      invoke: (_input, invocation) => ({
+        items: listAnnouncements(invocation.db, LIST_LIMIT).map(view),
+      }),
+    });
+
+    ctx.registerCapability({
+      id: 'create_announcement',
+      title: 'お知らせを投稿',
+      description: '管理者として社内のお知らせを投稿します。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', maxLength: MAX_TITLE },
+          body: { type: 'string', maxLength: MAX_BODY },
+          pinned: { type: 'boolean' },
+        },
+        required: ['title'],
+        additionalProperties: false,
+      },
+      readOnly: false,
+      invoke: (input, invocation) => {
+        if (!invocation.identity.isAdmin) throw new Error('admin_only');
+        const parsed = parseInput(input);
+        if (typeof parsed === 'string') throw new Error(parsed);
+        const id = insertAnnouncement(invocation.db, {
+          ...parsed,
+          createdBy: invocation.identity.externalId,
+        });
+        const row = getAnnouncement(invocation.db, id);
+        invocation.logger.info(
+          `announcement ${id} posted by ${invocation.identity.externalId}`,
+        );
+        return row ? view(row) : { id };
+      },
+    });
+
     ctx.registerRoute(api);
     // 上位 hub から集約できるよう、 データ経路をマニフェストに宣言する (D6)。
     ctx.registerData({ id: 'announcements', path: '/', title: 'お知らせ', scope: 'local' });

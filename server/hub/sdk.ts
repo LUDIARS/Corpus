@@ -37,5 +37,9 @@ export type {
   ConnectorScope,
   HealthStatus,
   PanelDescriptor,
+  CorpusCapability,
+  CapabilityInvocationContext,
+  CapabilitySchema,
+  CapabilityInfo,
   Logger,
 } from './types.ts';

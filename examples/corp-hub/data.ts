@@ -9,14 +9,15 @@ import type { CorpusDb } from '../../server/hub/sdk.ts';
 /** テーブル名の接頭辞。 Corpus 本体・他パックとの衝突を避ける。 */
 const PREFIX = 'corp';
 
-let applied = false;
+/** 適用済みハンドル。 process 単位の bool にすると 2 個目の DB が素通りする。 */
+const applied = new WeakSet<CorpusDb>();
 
 /**
  * このパックが使うテーブルを用意する。 各モジュールの setup() から呼ぶ
  * (どのモジュールが先に立ち上がっても冪等)。
  */
 export function ensureSchema(db: CorpusDb): void {
-  if (applied) return;
+  if (applied.has(db)) return;
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${PREFIX}_announcement (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,7 +30,7 @@ export function ensureSchema(db: CorpusDb): void {
     CREATE INDEX IF NOT EXISTS idx_${PREFIX}_announcement_created
       ON ${PREFIX}_announcement (pinned DESC, created_at DESC);
   `);
-  applied = true;
+  applied.add(db);
 }
 
 export interface AnnouncementRow {

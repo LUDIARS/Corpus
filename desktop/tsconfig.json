@@ -8,7 +8,7 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "out",
+    "outDir": "build",
     "rootDir": "src"
   },
   "include": ["src/**/*.ts"]

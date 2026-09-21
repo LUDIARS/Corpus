@@ -15,10 +15,13 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { CorpusDb } from '../db.ts';
+import type { AuthIdentity } from '../auth.ts';
 import type { ManifestConnector } from '../connectors/manifest-connector.ts';
 import type { ManifestDataEndpoint, ManifestPanel } from './manifest.ts';
 import type {
+  CapabilityInfo,
   ConnectorInfo,
+  CorpusCapability,
   CorpusContext,
   CorpusModule,
   Logger,
@@ -37,6 +40,7 @@ interface LoadedModule {
   manifestData: ManifestDataEndpoint[];
   /** setup 中に registerConnector された分。 setup 成功後にまとめて commit する。 */
   connectors: ServiceConnector[];
+  capabilities: CorpusCapability[];
 }
 
 function makeLogger(tag: string): Logger {
@@ -119,6 +123,38 @@ export class HubRegistry {
       icon: lm.module.icon ?? null,
       panel: lm.panel ? { entry: lm.panel.entry ?? 'panel.js' } : null,
     }));
+  }
+
+  listCapabilities(): CapabilityInfo[] {
+    return this.loaded.flatMap((loaded) =>
+      loaded.capabilities.map((capability) => ({
+        id: `${loaded.module.id}.${capability.id}`,
+        moduleId: loaded.module.id,
+        capabilityId: capability.id,
+        title: capability.title,
+        description: capability.description,
+        inputSchema: capability.inputSchema,
+        readOnly: capability.readOnly,
+      })),
+    );
+  }
+
+  async invokeCapability(
+    moduleId: string,
+    capabilityId: string,
+    input: Record<string, unknown>,
+    identity: AuthIdentity,
+  ): Promise<unknown> {
+    const loaded = this.loaded.find((entry) => entry.module.id === moduleId);
+    const capability = loaded?.capabilities.find((entry) => entry.id === capabilityId);
+    if (!loaded || !capability) {
+      throw new CapabilityNotFoundError(moduleId, capabilityId);
+    }
+    return capability.invoke(input, {
+      identity,
+      db: this.db,
+      logger: makeLogger(`cap:${moduleId}.${capabilityId}`),
+    });
   }
 
   /** モジュールのディレクトリ (panel.js 静的配信用)。 */
@@ -209,6 +245,7 @@ export class HubRegistry {
       routes: [],
       manifestData: [],
       connectors: [],
+      capabilities: [],
     };
     const ctx: CorpusContext = {
       db: this.db,
@@ -219,6 +256,17 @@ export class HubRegistry {
       registerRoute: (sub) => entry.routes.push(sub),
       registerPanel: (p) => {
         entry.panel = { ...p, moduleId: module.id, entry: p.entry ?? 'panel.js' };
+      },
+      registerCapability: (capability) => {
+        if (!/^[a-z][a-z0-9_]*$/.test(capability.id)) {
+          throw new Error(
+            `capability id "${capability.id}" は /^[a-z][a-z0-9_]*$/ に一致する必要があります`,
+          );
+        }
+        if (entry.capabilities.some((registered) => registered.id === capability.id)) {
+          throw new Error(`capability id 重複: ${module.id}.${capability.id}`);
+        }
+        entry.capabilities.push(capability);
       },
       registerData: (d) => {
         // path をモジュールの mount 先 (/api/x/<moduleId>) 基準で絶対化する
@@ -261,6 +309,13 @@ export class HubRegistry {
       data: this.loaded.flatMap((lm) => lm.manifestData),
       panels,
     };
+  }
+}
+
+export class CapabilityNotFoundError extends Error {
+  constructor(moduleId: string, capabilityId: string) {
+    super(`capability_not_found: ${moduleId}.${capabilityId}`);
+    this.name = 'CapabilityNotFoundError';
   }
 }
 

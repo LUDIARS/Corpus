@@ -1,0 +1,6 @@
+{
+  "productName": "Enterprise Corpus",
+  "serviceId": "enterprise-corpus",
+  "pluginPack": "examples/corp-hub",
+  "noAuth": true
+}

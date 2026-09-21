@@ -2,17 +2,35 @@
   "name": "corpus-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Corpus ローカルアプリ — 純クライアント Electron shell",
-  "main": "out/main.js",
+  "productName": "Enterprise Corpus",
+  "description": "Rebrandable Electron distribution base for enterprise Corpus capability packs",
+  "main": "build/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build:assets": "npm --prefix .. run build:web",
+    "build:shell": "tsc -p tsconfig.json",
+    "build:server": "node scripts/build-runtime.mjs",
+    "build": "npm run build:assets && npm run build:shell && npm run build:server",
     "predev": "npm run build",
     "dev": "electron .",
-    "start": "electron ."
+    "start": "electron .",
+    "package": "npm run build && electron-forge package",
+    "make": "npm run build && electron-forge make"
+  },
+  "config": {
+    "forge": "./forge.config.cjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "update-electron-app": "^3.3.0"
   },
   "devDependencies": {
+    "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-squirrel": "^7.11.2",
+    "@electron-forge/maker-zip": "^7.11.2",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.11.2",
     "@types/node": "^20.14.0",
-    "electron": "^33.0.0",
+    "electron": "^43.2.0",
+    "esbuild": "^0.27.0",
     "typescript": "^5.6.0"
   }
 }

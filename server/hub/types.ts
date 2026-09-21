@@ -5,6 +5,7 @@
 // hub パネルを登録する。
 
 import type { Hono } from 'hono';
+import type { AuthIdentity } from '../auth.ts';
 import type { CorpusDb } from '../db.ts';
 import type { CorpusServiceManifest } from './manifest.ts';
 import type { TokenProvider } from './tokens.ts';
@@ -76,6 +77,41 @@ export interface ModuleDataDecl {
   scope?: ConnectorScope;
 }
 
+export interface CapabilitySchema {
+  type: 'object';
+  properties?: Record<string, unknown>;
+  required?: string[];
+  additionalProperties?: boolean;
+}
+
+export interface CapabilityInvocationContext {
+  readonly identity: AuthIdentity;
+  readonly db: CorpusDb;
+  readonly logger: Logger;
+}
+
+export interface CorpusCapability {
+  id: string;
+  title: string;
+  description: string;
+  inputSchema: CapabilitySchema;
+  readOnly: boolean;
+  invoke(
+    input: Record<string, unknown>,
+    context: CapabilityInvocationContext,
+  ): Promise<unknown> | unknown;
+}
+
+export interface CapabilityInfo {
+  id: string;
+  moduleId: string;
+  capabilityId: string;
+  title: string;
+  description: string;
+  inputSchema: CapabilitySchema;
+  readOnly: boolean;
+}
+
 export interface CorpusContext {
   /** Corpus 本体と共有の SQLite。 モジュールは自分のテーブルを CREATE IF NOT EXISTS で足してよい。 */
   readonly db: CorpusDb;
@@ -87,6 +123,8 @@ export interface CorpusContext {
   registerRoute(sub: Hono): void;
   /** hub frontend のタブを登録する。 */
   registerPanel(panel: PanelDescriptor): void;
+  /** UI / Skill / MCP から共通で呼べる機能を登録する。 */
+  registerCapability(capability: CorpusCapability): void;
   /**
    * hub データエンドポイントを宣言する。 Corpus 自身のマニフェスト
    * (/.well-known/corpus-service.json) の data[] に載り、 この Corpus を

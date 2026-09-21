@@ -14,6 +14,7 @@ examples/corp-hub/*/panel.js.map
 public/vendor/
 desktop/out/
 desktop/dist/
+desktop/build/
 *.tsbuildinfo
 
 # ローカル依存ライブラリ (git submodule update --init でセットアップ)

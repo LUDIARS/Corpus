@@ -1,0 +1,23 @@
+{
+  "name": "enterprise-corpus",
+  "version": "0.1.0",
+  "description": "Invoke the same enterprise capabilities exposed by the Corpus desktop app.",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Enterprise Corpus",
+    "shortDescription": "Use Corpus desktop capabilities from Codex.",
+    "longDescription": "Lists and invokes the same governed capabilities used by the Corpus Electron UI through Skill or MCP.",
+    "developerName": "LUDIARS",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": "Use Enterprise Corpus to find the relevant capability and complete my request."
+  },
+  "mcpServers": "./.mcp.json"
+}

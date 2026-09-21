@@ -232,6 +232,9 @@ migration は `CREATE IF NOT EXISTS` + ALTER 後付け方式
 | GET | `/api/hub/discovery`        | 現在の discovery 設定 + locked フラグ (admin) — §9.3 |
 | PUT | `/api/hub/discovery`        | discovery 設定を runtime に差し替え (admin、 locked なら 423) — §9.3 |
 | ALL | `/api/x/<moduleId>/*`       | 各プラグインモジュールのサブルータ |
+| GET | `/api/capabilities`         | 登録済 capability 一覧 (実行はしない) — `spec/feature/capability-runtime.md` |
+| POST | `/api/capabilities/<moduleId>/<capabilityId>/invoke` | capability を実行 |
+| POST | `/mcp`                      | MCP (JSON-RPC 2.0)。 `/api/*` の外だが同じ Cernere 認証必須 |
 
 ---
 
@@ -278,12 +281,17 @@ Corpus 本体は **起動時 (env / CLI) と起動後 (API) の両方で** disco
 ## 10. ローカルアプリ (Electron)
 
 - Memoria desktop と同パターン: `electron` + TypeScript ラッパー。
-- 起動時に Corpus server を子プロセス spawn (loopback 17520)、
+- 起動時に内蔵 Corpus server を子プロセス spawn (loopback、 空き port を予約)、
   BrowserWindow で frontend を表示。
 - 純クライアント — 外部公開 web フロントを持たない。
 - タスクトレイ常駐 (close = hide)。
 - ローカルサービスへ直結してローカル情報を取得、 `CORPUS_REMOTE_URL` 経由で
   マルチ情報を取得し、 frontend で区別表示する。
+- 配布物は `desktop/corpus.desktop.json` で再ブランドする。 表示名・サービス id・
+  同梱する plugin pack・認証モード・更新先はこのファイルだけが決める。
+  詳細は `spec/feature/desktop-runtime.md`、 手順は `desktop/README.md`。
+- server / plugin entry / Web UI / `better-sqlite3` を 1 つの配布物へまとめ、
+  server プロセス・ウィンドウ・トレイ・自動更新の寿命を shell が所有する。
 - 用途特化 hub (VantanHub 等) は、 この shell を出発点に
   マスコット表示や最前面通知などを足す。
 

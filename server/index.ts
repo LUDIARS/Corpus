@@ -44,6 +44,8 @@ import { makeHubRouter } from './routes/hub.ts';
 import { expandPanelRefs, isPanelDescriptor } from './hub/shared-ui-expand.ts';
 import { makeSharedUiResolver } from './hub/shared-ui-resolver.ts';
 import { makeMeRouter } from './routes/me.ts';
+import { makeCapabilitiesRouter } from './routes/capabilities.ts';
+import { makeMcpRouter } from './routes/mcp.ts';
 import { CleanupScope, type CorpusRuntime } from './lifecycle.ts';
 import { ownHttpServer } from './http-lifetime.ts';
 
@@ -450,7 +452,13 @@ export async function startCorpus(): Promise<CorpusRuntime> {
 
   // /api/* は health を除き Cernere 認証必須
   app.use('/api/*', requireAuth);
+  // MCP は /api/* の外側に立つので、 同じ requireAuth を明示的に被せる。
+  // capability は HTTP でも MCP でも同一の Cernere identity で実行する。
+  app.use('/mcp', requireAuth);
+  app.use('/mcp/*', requireAuth);
   app.route('/api/me', makeMeRouter(db));
+  app.route('/api/capabilities', makeCapabilitiesRouter(registry));
+  app.route('/mcp', makeMcpRouter(registry));
   // discovery loop は wiring の中で動的に差し替え可 — controller を hub router
   // に渡して runtime mutation API を有効化する (spec/feature/runtime-discovery.md)。
   // boot 時 `CORPUS_DISCOVERY_LOCKED=1` (継承先 VantanHub 等が固定したい場合) で

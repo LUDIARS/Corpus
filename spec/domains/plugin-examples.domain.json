@@ -1,6 +1,6 @@
 {
   "name": "plugin-examples",
-  "description": "プラグインパックの参考実装。CORPUS_PLUGIN_DIR で明示指定したときだけロードされ、Corpus 本体には含まれない。自前データ / Cernere 正本 / 外部コネクタの 3 類型を示すテンプレートで、派生 Hub はここを写して作る。",
+  "description": "プラグインパックの参考実装。CORPUS_PLUGIN_DIR で明示指定したときだけロードされ、Corpus 本体には含まれない。自前データ / Cernere 正本 / 外部コネクタの 3 類型を示すテンプレートと、同じ capability を Skill / MCP から呼ぶ agent 向け連携パックで、派生 Hub はここを写して作る。",
   "presetRules": [],
   "templateRules": [],
   "membership": [
@@ -9,7 +9,10 @@
     },
     {
       "pathPattern": "(^|/)examples/corp-hub/[^/]+/[^/]+$"
+    },
+    {
+      "pathPattern": "(^|/)integrations/plugins/[^/]+/.*\\.(ts|tsx|js|mjs|cjs)$"
     }
   ],
-  "cardTemplate": "Summarise the \"plugin-examples\" domain: プラグインパックの参考実装。CORPUS_PLUGIN_DIR で明示指定したときだけロードされ、Corpus 本体には含まれない。自前データ / Cernere 正本 / 外部コネクタの 3 類型を示すテンプレートで、派生 Hub はここを写して作る。"
+  "cardTemplate": "Summarise the \"plugin-examples\" domain: プラグインパックの参考実装。CORPUS_PLUGIN_DIR で明示指定したときだけロードされ、Corpus 本体には含まれない。自前データ / Cernere 正本 / 外部コネクタの 3 類型を示すテンプレートと、同じ capability を Skill / MCP から呼ぶ agent 向け連携パックで、派生 Hub はここを写して作る。"
 }

@@ -5,7 +5,7 @@
   "templateRules": [],
   "membership": [
     {
-      "pathPattern": "(^|/)scripts/[^/]+$"
+      "pathPattern": "^scripts/[^/]+$"
     },
     {
       "pathPattern": "(^|/)vitest\\.config\\.ts$"

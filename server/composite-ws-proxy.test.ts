@@ -1,6 +1,9 @@
+import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import { connect, type Socket } from 'node:net';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -12,7 +15,35 @@ import {
 const servers: Server[] = [];
 const sockets: Duplex[] = [];
 
-function listen(server: Server): Promise<number> {
+let ipcSequence = 0;
+
+/**
+ * The browser-facing side of the proxy is served over an IPC endpoint (named
+ * pipe on Windows, unix socket elsewhere) instead of an OS-assigned ephemeral
+ * TCP port. The HTTP upgrade path exercised here is identical — `http.Server`
+ * parses upgrades the same way on either transport — but a loopback TCP connect
+ * to an ephemeral port intermittently fails with ETIMEDOUT (errno -4039) on the
+ * review host, which fails this test for a reason that has nothing to do with
+ * the proxy contract. The upstream leg below stays TCP because the proxy dials
+ * an http(s) URL by contract, and faking that would stop proving the relay.
+ */
+function ipcEndpoint(): string {
+  const name = `corpus-composite-ws-${process.pid}-${++ipcSequence}`;
+  return process.platform === 'win32'
+    ? `\\\\.\\pipe\\${name}`
+    : join(tmpdir(), `${name}.sock`);
+}
+
+function listenIpc(server: Server): Promise<string> {
+  servers.push(server);
+  const endpoint = ipcEndpoint();
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(endpoint, () => resolve(endpoint));
+  });
+}
+
+function listenTcp(server: Server): Promise<number> {
   servers.push(server);
   return new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -61,7 +92,7 @@ describe('attachCompositeWebSocketProxy', () => {
         '',
       ].join('\r\n'));
     });
-    const upstreamPort = await listen(upstreamServer);
+    const upstreamPort = await listenTcp(upstreamServer);
 
     const proxyServer = createServer((_request, response) => response.end('ok'));
     attachCompositeWebSocketProxy(
@@ -69,12 +100,15 @@ describe('attachCompositeWebSocketProxy', () => {
       `http://127.0.0.1:${upstreamPort}`,
       (diagnostic) => diagnostics.push(diagnostic),
     );
-    const proxyPort = await listen(proxyServer);
+    const proxyEndpoint = await listenIpc(proxyServer);
 
-    const client = connect(proxyPort, '127.0.0.1');
+    const client = connect(proxyEndpoint);
+    // Connect first so a transport failure surfaces as a connect error instead
+    // of being buffered into the request write and read back as a header stall.
+    await once(client, 'connect');
     client.write([
       'GET /auth/composite-ws?ticket=must-not-be-forwarded HTTP/1.1',
-      `Host: 127.0.0.1:${proxyPort}`,
+      'Host: 127.0.0.1',
       'Connection: Upgrade',
       'Upgrade: websocket',
       'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',

@@ -17,6 +17,8 @@ Corpus 本体はドメインを持たないため、このパックは `examples
 | `facility` | **外部コネクタ** | Aedilis への中継。 `tokenProvider` 経由の参照先トークン発行と degraded 動作 |
 
 ドメイン機能を足すときは、この 3 類型のどれに当たるかを決めてから書く。
+`announcements` はさらに `registerCapability` を使い、一覧取得・投稿を UI、
+Skill、MCP から同じ handler で実行する例にもなっている。
 
 ---
 
@@ -75,7 +77,7 @@ DB スキーマは `data.ts` に集約する (定義がモジュール間に散�
 
 ---
 
-## 派生リポへ持ち上げる (EducationLab 方式)
+## 派生リポへ持ち上げる (GLAB 方式)
 
 社内向けに本番運用するなら、このパックを別リポへ移して Corpus を submodule で取り込む。
 
@@ -91,5 +93,5 @@ cp -r <corpus>/examples/corp-hub/* plugins/
    (パネルの `../../public/src/types.ts` → `../../corpus/public/src/types.ts`)
 2. `server.ts` を置いて `CORPUS_PLUGIN_DIR=plugins` で Corpus を起動する
 
-先行例は VGA-EducationLab/EducationLab (学校向け Hub)。`corpus/` submodule は触らず、Corpus 本体への
+先行例は VGA-GLAB/GLAB (学校向け Hub)。`corpus/` submodule は触らず、Corpus 本体への
 変更は LUDIARS/Corpus 側で PR を出して submodule pointer を上げる運用にする。
