@@ -155,9 +155,24 @@ Cernere #282 で署名鍵を DB 永続化済みなので、再起動での失効
 
 | 方式 | 判断 | 理由 |
 |---|---|---|
-| Ed25519 assertion (Ostiarius 出席) | **残す** | 「その端末がその場に居た」の証明で、service 認証とは別問題。鮮度 120 秒と replay 検出が本質 |
+| Ed25519 assertion (Ostiarius 所在確認) | **残す** | 「本人がその場に居た」の証明で、service 認証とは別問題。鮮度 120 秒と replay 検出が本質。出席用 (`purpose: attendance`) に加え、Cernere の MFA 要素「現地確認 (onsite)」としても受け取る (`purpose: mfa`、§5.1) |
 | edge assertion (Cloudflare Access) | **残す** | 信頼境界がネットワーク edge にある。Cernere の外で成立する認証を受け取る口 |
 | user OAuth (GitHub / Google / Discord) | **残す** | ユーザ本人の認証であって service 認証ではない |
+
+### 5.1 ユーザ本人の確度は別の層 (Draft、2026-10-01)
+
+本計画が集約するのは **ユーザ不在の service 間認証** で、ユーザ本人の確度 (MFA) は扱わない。
+ただし Ostiarius の所在確認は、Cernere 単体では証明できない「現地に本人が居る」ことを
+示せるので、**現地確認系の MFA 要素**として Cernere が受け取る設計案がある
+(Ostiarius `spec/feature/onsite-mfa-factor.md`、Cernere `spec/feature/mfa-authenticator.md`
+SPEC-MFA-ONSITE。いずれも neco 承認前)。
+
+本計画との接点は 2 つ:
+
+- Ostiarius → Cernere の attestation 送信は、P2/P3 の scope 付き service token
+  (`onsite-mfa:submit`) で行う。固定トークンを新設しない。
+- Ostiarius が今使っている顔データ系の scope (`face-revocation:read` など) は Cernere の
+  コード内定数。P3 の宣言 (`service_scopes`) が入ったらそちらへ移す。
 
 ## 6. 段階
 
