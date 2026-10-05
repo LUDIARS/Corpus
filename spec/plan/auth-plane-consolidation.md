@@ -105,6 +105,27 @@ scope の検査を実装する。
 発行済み token は process memory のみにキャッシュする (現行方針を踏襲、disk /
 Infisical に残さない)。
 
+#### 4.2.1 実装状況 (2026-10-05、Actio `f04684e0`)
+
+- **送り側**: `TokenProvider.getServiceToken` は Corpus には足していない。service 文脈の
+  token 取得は、各サービスの送り側実装 (GLAB / Calliope / Discutere / Volputas、P4 で
+  実装済み) が自分の client credentials で Cernere から取得する形で代替した。
+- **受け側 (Corpus)**: `requireAuth` に「プラグイン外部経路だけ Cernere service token を
+  通す」口を入れた。これが P2 の Corpus 側にあたる。
+  - 対象は `/api/x/<moduleId>/external` 配下だけ。`CORPUS_EXTERNAL_SERVICE_AUTH_MODULES`
+    (カンマ区切りの moduleId) でモジュール単位に opt-in し、未設定なら現行挙動のまま。
+  - token の置き場所は `CORPUS_EXTERNAL_SERVICE_TOKEN_HEADERS` で設定したヘッダと
+    `Authorization: Bearer`。値が `v4.public.` で始まるものだけを対象に、
+    `/.well-known/cernere-public-key` の公開鍵で署名・`kind === "service"`・`exp`・
+    `aud === CORPUS_CERNERE_STORAGE_SLUG` (ハブ自身の storage_slug、有効化時は必須) を検証する。
+    scope は見ない (プラグイン側が `getServicePrincipal(c).scope` で判定する)。
+  - 通したリクエストには service 主体 `{ kind: 'service', sub, scope }` を積む。
+    `getIdentity()` は例外、`requireAdmin` は 401、`getUserToken()` は null。
+  - 外部経路でも有効なユーザ token があればユーザとして通す。service token が不正なら 401、
+    公開鍵が取得できないときは 503。外部経路以外と `CORPUS_NO_AUTH` の挙動は変えていない。
+  - 実装: `server/external-service-auth.ts` (設定・経路判定)、`server/service-token.ts`
+    (検証器)、`server/paseto-v4-public.ts` (署名検証、GLAB と同じ実装)。
+
 ### 4.3 権限は宣言で決める。名前で決めない
 
 「誰が何を呼べるか」を呼び出し元の名前で判定しない。#282 で入れた宣言駆動を
@@ -182,6 +203,9 @@ SPEC-MFA-ONSITE。いずれも neco 承認前)。
    migration + 8 箇所の呼び出し変更 + key 制約の緩和。
 2. **P2 getServiceToken** — 4.2。Corpus `TokenProvider` の拡張と Cernere 側の
    service token 発行。この時点ではまだ誰も使わない。
+   - 2026-10-05: Corpus 側は受け側 (`requireAuth` の外部経路口、§4.2.1) として入った。
+     `TokenProvider.getServiceToken` は各サービスの送り側実装 (GLAB / Calliope /
+     Discutere / Volputas、P4 で実装済み) で代替し、Corpus には足していない。
 3. **P3 service_scopes** — 4.3。宣言と受け側の検査。
 4. **P4 移行** — 固定トークンの利用箇所を P2/P3 へ 1 つずつ載せ替える。
    `X-Glab-Service-Token` → `GLAB_PROJECTS_SERVICE_TOKEN` →

@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "contractsDir": "contracts",
+  "importFrom": "@ludiars/log-weaver",
+  "contracts": [
+    {
+      "id": "C-1",
+      "criterion": "C-1 decideServicePrincipal(claims, audience, nowMs): kind=service・aud=ハブの storage_slug・exp 未到来の claims だけを service 主体として返し、それ以外は null",
+      "symbol": "decideServicePrincipal",
+      "file": "server/service-token.ts",
+      "module": "contracts/service-principal.contract.ts",
+      "mode": "observe",
+      "sample": 1
+    },
+    {
+      "id": "C-2",
+      "criterion": "C-2 matchExternalServiceRoute(path, modules): 有効化されたモジュールの /api/x/<moduleId>/external 配下だけ moduleId を返し、それ以外の経路は null",
+      "symbol": "matchExternalServiceRoute",
+      "file": "server/external-service-auth.ts",
+      "module": "contracts/external-service-route.contract.ts",
+      "mode": "observe",
+      "sample": 1
+    },
+    {
+      "id": "C-3",
+      "criterion": "C-3 readExternalServiceAuthConfig(env): モジュール未指定なら null (既定無効) を返し、有効化時は storage_slug 必須で audience とヘッダ名を小文字正規化して返す",
+      "symbol": "readExternalServiceAuthConfig",
+      "file": "server/external-service-auth.ts",
+      "module": "contracts/external-service-config.contract.ts",
+      "mode": "observe",
+      "sample": 1
+    }
+  ]
+}

@@ -18,6 +18,12 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { createHash } from 'node:crypto';
 import { resolveExternalId, type CorpusDb } from './db.ts';
+import {
+  extractServiceTokenCandidate,
+  matchExternalServiceRoute,
+  type ExternalServiceAuth,
+} from './external-service-auth.ts';
+import { isServiceTokenCandidate, type ServicePrincipal } from './service-token.ts';
 
 /** 検証結果キャッシュの TTL。 user accessToken の寿命 (60min) より十分短く取る。 */
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -42,6 +48,11 @@ interface AuthOptions {
   /** この Corpus が接続する Cernere の issuer 識別子。 */
   issuer: string;
   cookieSecure: boolean;
+  /**
+   * プラグイン外部経路 (/api/x/<moduleId>/external/*) で Cernere service token を
+   * 受理する設定。 null / 未指定なら無効 (現行挙動)。
+   */
+  externalService?: ExternalServiceAuth | null;
 }
 
 export interface AuthTokenPair {
@@ -192,17 +203,15 @@ const NO_AUTH_IDENTITY: AuthIdentity = {
   isAdmin: true,
 };
 
-export const requireAuth: MiddlewareHandler = async (c, next) => {
-  if (process.env.CORPUS_NO_AUTH === '1') {
-    // 認証 bypass — UI / hub の動作確認用。 downstream service への参照先
-    // トークン発行は機能しない (userToken が空) ので、 services への
-    // 実データ取得は別途 noauth 設定された service でないと 401 になる。
-    c.set('auth', NO_AUTH_IDENTITY);
-    c.set('userToken', '');
-    await next();
-    return;
-  }
-  const bearerToken = extractBearerToken(c);
+type UserAuthResult =
+  | { ok: true; token: string; identity: AuthIdentity }
+  | { ok: false; error: 'unauthorized' | 'invalid_token' };
+
+/**
+ * ユーザ token (Bearer → cookie → refresh cookie) を検証する。 bearerToken は
+ * ユーザ token として扱う Bearer 値 (無ければ null)。
+ */
+async function resolveUserAuth(c: Context, bearerToken: string | null): Promise<UserAuthResult> {
   let token = bearerToken ?? getCookie(c, ACCESS_COOKIE) ?? null;
   let identity = token ? await verifyToken(token) : null;
   if (!identity && !bearerToken) {
@@ -216,11 +225,60 @@ export const requireAuth: MiddlewareHandler = async (c, next) => {
       clearAuthCookies(c);
     }
   }
-  if (!token) return c.json({ error: 'unauthorized' }, 401);
-  if (!identity) return c.json({ error: 'invalid_token' }, 401);
-  c.set('auth', identity);
-  // D5: 参照先トークン発行 (tokens.ts) で使う user accessToken を ctx に積む。
-  c.set('userToken', token);
+  if (!token) return { ok: false, error: 'unauthorized' };
+  if (!identity) return { ok: false, error: 'invalid_token' };
+  return { ok: true, token, identity };
+}
+
+/**
+ * 外部経路 (有効化済みモジュールの /api/x/<moduleId>/external/*) の認証。
+ * 有効なユーザ token があれば従来どおりユーザとして通し、 無ければ Cernere service
+ * token (署名・kind・exp・aud) を検証して service 主体を積む。 scope はプラグイン側が見る。
+ * user accessToken は PASETO ではないので、 `v4.public.` の Bearer はユーザ検証に回さない。
+ */
+async function authenticateExternalRoute(
+  c: Context,
+  external: ExternalServiceAuth,
+): Promise<UserAuthResult | { ok: true; principal: ServicePrincipal } | { ok: false; status: 401 | 503; error: string }> {
+  const bearer = extractBearerToken(c);
+  const userBearer = bearer && !isServiceTokenCandidate(bearer) ? bearer : null;
+  const user = await resolveUserAuth(c, userBearer);
+  if (user.ok) return user;
+  const serviceToken = extractServiceTokenCandidate(c, external.headerNames);
+  if (!serviceToken) return user;
+  const verification = await external.verifier.verify(serviceToken);
+  switch (verification.status) {
+    case 'ok': return { ok: true, principal: verification.principal };
+    case 'invalid': return { ok: false, status: 401, error: 'invalid_service_token' };
+    case 'unavailable': return { ok: false, status: 503, error: 'service_token_verifier_unavailable' };
+  }
+}
+
+export const requireAuth: MiddlewareHandler = async (c, next) => {
+  if (process.env.CORPUS_NO_AUTH === '1') {
+    // 認証 bypass — UI / hub の動作確認用。 downstream service への参照先
+    // トークン発行は機能しない (userToken が空) ので、 services への
+    // 実データ取得は別途 noauth 設定された service でないと 401 になる。
+    c.set('auth', NO_AUTH_IDENTITY);
+    c.set('userToken', '');
+    await next();
+    return;
+  }
+  const external = optsRef?.externalService ?? null;
+  const result = external && matchExternalServiceRoute(c.req.path, external.modules)
+    ? await authenticateExternalRoute(c, external)
+    : await resolveUserAuth(c, extractBearerToken(c));
+  if (!result.ok) {
+    return c.json({ error: result.error }, 'status' in result ? result.status : 401);
+  }
+  if ('principal' in result) {
+    // service 主体: auth / userToken は積まない (getIdentity は例外、 getUserToken は null)。
+    c.set('servicePrincipal', result.principal);
+  } else {
+    c.set('auth', result.identity);
+    // D5: 参照先トークン発行 (tokens.ts) で使う user accessToken を ctx に積む。
+    c.set('userToken', result.token);
+  }
   await next();
 };
 
@@ -233,8 +291,21 @@ export const requireAdmin: MiddlewareHandler = async (c, next) => {
 
 export function getIdentity(c: Context): AuthIdentity {
   const id = c.get('auth') as AuthIdentity | undefined;
-  if (!id) throw new Error('auth identity missing — requireAuth not mounted');
+  if (!id) {
+    if (c.get('servicePrincipal')) {
+      throw new Error('auth identity missing — request is authenticated as a service principal');
+    }
+    throw new Error('auth identity missing — requireAuth not mounted');
+  }
   return id;
+}
+
+/**
+ * 外部経路で requireAuth が通した service 主体 (ユーザ認証のリクエストでは null)。
+ * プラグインは scope をここから読んで endpoint ごとの認可を行う。
+ */
+export function getServicePrincipal(c: Context): ServicePrincipal | null {
+  return (c.get('servicePrincipal') as ServicePrincipal | undefined) ?? null;
 }
 
 /** requireAuth が積んだ user accessToken を取り出す (参照先トークン発行用)。 */
@@ -246,6 +317,7 @@ declare module 'hono' {
   interface ContextVariableMap {
     auth: AuthIdentity;
     userToken: string;
+    servicePrincipal: ServicePrincipal;
   }
 }
 

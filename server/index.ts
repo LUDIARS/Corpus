@@ -35,6 +35,8 @@ import {
 import { writeDiagnostic } from './lib/logging.ts';
 import { resolveRequestOrigin } from './request-origin.ts';
 import { checkEdgeDevIdentity, makeEdgeHeaderGuard, parseAuthMode } from './edge-guard.ts';
+import { readExternalServiceAuthConfig } from './external-service-auth.ts';
+import { CernereServiceTokenVerifier } from './service-token.ts';
 import { HubRegistry } from './hub/registry.ts';
 import { startHealthLoop } from './hub/aggregate.ts';
 import { readDiscoveryConfig, startDiscoveryLoop } from './hub/discovery.ts';
@@ -123,6 +125,15 @@ const EDGE_DEV_BYPASS = (() => {
 // external-id マッピングの issuer。 単一 Cernere 運用では CERNERE_BASE_URL を使う。
 const CERNERE_ISSUER =
   process.env.CORPUS_CERNERE_ISSUER?.trim() || CERNERE_BASE_URL;
+// プラグイン外部経路の Cernere service token 受理 (既定無効、 server/external-service-auth.ts)。
+const EXTERNAL_SERVICE_AUTH = (() => {
+  try {
+    return readExternalServiceAuthConfig(process.env);
+  } catch (e) {
+    console.error(`[corpus] ${(e as Error).message}`);
+    throw e;
+  }
+})();
 const ADMIN_IDS = new Set(
   (process.env.CORPUS_ADMIN_IDS ?? '')
     .split(',')
@@ -153,7 +164,20 @@ export async function startCorpus(): Promise<CorpusRuntime> {
       db,
       issuer: CERNERE_ISSUER,
       cookieSecure: new URL(AUDIENCE).protocol === 'https:',
+      externalService: EXTERNAL_SERVICE_AUTH && {
+        modules: EXTERNAL_SERVICE_AUTH.modules,
+        headerNames: EXTERNAL_SERVICE_AUTH.headerNames,
+        verifier: new CernereServiceTokenVerifier({
+          cernereBaseUrl: CERNERE_BASE_URL,
+          audience: EXTERNAL_SERVICE_AUTH.audience,
+        }),
+      },
     });
+    if (EXTERNAL_SERVICE_AUTH) {
+      console.log(
+        `[corpus] external service auth: modules=${[...EXTERNAL_SERVICE_AUTH.modules].join(',')} aud=${EXTERNAL_SERVICE_AUTH.audience}`,
+      );
+    }
     scope.defer(stopAuth);
   }
 

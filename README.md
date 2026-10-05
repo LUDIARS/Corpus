@@ -67,6 +67,20 @@ dev-user が全リクエストを処理する状態になるため、 本番で�
 未設定でも `passthrough` を既定として許す (ローカル開発を壊さないため)。 不正な
 値 (上記以外) はこの dev 例外下でも常に起動拒否する。
 
+### プラグイン外部経路の service token (`CORPUS_EXTERNAL_SERVICE_AUTH_MODULES`)
+
+ユーザ token を持たないサービス呼び出し (bot / 他サービス) を、 プラグインの
+`/api/x/<moduleId>/external/*` に限って Cernere service token で通す。 既定は無効。
+
+| env | 意味 |
+|-----|------|
+| `CORPUS_EXTERNAL_SERVICE_AUTH_MODULES` | 有効化する moduleId (カンマ区切り)。 未設定 = 無効 |
+| `CORPUS_EXTERNAL_SERVICE_TOKEN_HEADERS` | service token を探すヘッダ名 (カンマ区切り)。 `Authorization: Bearer` は常に見る |
+| `CORPUS_CERNERE_STORAGE_SLUG` | ハブ自身の Cernere storage_slug (token の `aud`)。 有効化時は必須 |
+
+`v4.public.` の値だけを署名・`kind=service`・`exp`・`aud` で検証し、 scope は
+プラグインが `getServicePrincipal(c)` で判定する (spec/plan/auth-plane-consolidation.md §4.2.1)。
+
 ローカルアプリ:
 
 ```sh
