@@ -1,14 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import {
-  CompositeLogin,
-  CompositePasskeyPopup,
-  type CompositeAuthApi,
-  type CompositeAuthResponse,
-  type DeviceAnomaly,
-  type DeviceFingerprint,
-} from '../../lib/cernere/packages/composite/src/ui/index.ts';
+import { CompositeLoginFrame } from '../../lib/cernere/packages/composite/src/ui/CompositeLoginFrame.tsx';
+import type { CompositeAuthApi, CompositeAuthResponse, DeviceAnomaly, DeviceFingerprint } from './legacy-composite-types.ts';
 import { clearLegacyToken } from './api.ts';
 
 interface CompositeStartResponse extends CompositeAuthResponse {
@@ -56,7 +50,6 @@ export interface CernereCompositeClientDeps {
 const WS_OPEN = 1;
 const REQUEST_TIMEOUT_MS = 30_000;
 const COMPOSITE_STATE_PARAM = 'cernere_composite_state';
-const COMPOSITE_STATE_KEY = 'cernere:composite:redirect-state';
 
 export function buildPasskeyRedirectUrl(
   cernereFrontendUrl: string,
@@ -318,114 +311,18 @@ async function exchangeAuthCode(authCode: string): Promise<void> {
   location.reload();
 }
 
-function LoginHost({
-  client,
-  cernereFrontendUrl,
-  message,
-}: {
-  client: CernereCompositeAuthClient;
-  cernereFrontendUrl?: string;
-  message: string;
-}) {
+/** @implements SPEC-HUB-EMBEDDED-LOGIN-001 */
+function EmbeddedLoginHost({ cernereFrontendUrl, message }: { cernereFrontendUrl: string; message: string }) {
   const [error, setError] = useState('');
-  const exchangeCode = (code: string) => {
-    setError('');
-    return exchangeAuthCode(code).catch((cause: unknown) => {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    });
-  };
-  return (
-    <>
-      {error && <p className="error">{error}</p>}
-      <CompositeLogin
-        authApi={client}
-        onAuthCode={exchangeCode}
-        labels={{
-          title: 'Officina - EducationLab',
-          subtitle: message || 'ログインはここから',
-          loginTab: 'ログイン',
-          registerTab: '新規登録',
-          name: '名前',
-          email: 'メールアドレス',
-          password: 'パスワード',
-          submitLogin: 'ログイン',
-          submitRegister: 'アカウントを作成',
-          processing: '処理中…',
-          deviceTitle: '本人確認',
-          deviceCode: '確認コード',
-          deviceSubmit: '確認する',
-          deviceResend: 'コードを再送',
-        }}
-      />
-      {cernereFrontendUrl && (
-        <CompositePasskeyPopup
-          cernereUrl={cernereFrontendUrl}
-          onAuthCode={exchangeCode}
-          onError={(cause) => setError(cause.message)}
-          buttonLabel="パスキーでログイン"
-          className="primary"
-        />
-      )}
-    </>
-  );
+  return <>
+    {message && <p className="muted">{message}</p>}
+    {error && <p className="error" role="alert">{error}</p>}
+    <CompositeLoginFrame cernereUrl={cernereFrontendUrl} onAuthCode={exchangeAuthCode}
+      onError={cause => setError(cause.message)} />
+  </>;
 }
 
-function PasskeyLoginHost({
-  cernereFrontendUrl,
-  message,
-}: {
-  cernereFrontendUrl: string;
-  message: string;
-}) {
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    const callbackUrl = new URL(location.href);
-    const state = callbackUrl.searchParams.get(COMPOSITE_STATE_PARAM);
-    const code = callbackUrl.searchParams.get('code');
-    if (!state || !code) return;
-
-    callbackUrl.searchParams.delete(COMPOSITE_STATE_PARAM);
-    callbackUrl.searchParams.delete('code');
-    history.replaceState({}, '', callbackUrl.toString());
-
-    const expectedState = sessionStorage.getItem(COMPOSITE_STATE_KEY);
-    sessionStorage.removeItem(COMPOSITE_STATE_KEY);
-    if (!expectedState || expectedState !== state) {
-      setError('ログインの復帰情報を検証できませんでした');
-      return;
-    }
-    void exchangeAuthCode(code).catch((cause: unknown) => {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    });
-  }, []);
-
-  const startPasskeyLogin = () => {
-    try {
-      const state = crypto.randomUUID();
-      sessionStorage.setItem(COMPOSITE_STATE_KEY, state);
-      location.assign(buildPasskeyRedirectUrl(cernereFrontendUrl, location.href, state));
-    } catch {
-      setError('Cernere のログイン先を作成できませんでした');
-    }
-  };
-
-  return (
-    <>
-      <h1>Officina - EducationLab</h1>
-      <p className="muted">{message || 'ログインはここから'}</p>
-      {error && <p className="error">{error}</p>}
-      <button
-        type="button"
-        className="primary"
-        onClick={startPasskeyLogin}
-      >
-        ログイン
-      </button>
-    </>
-  );
-}
-
+export { CompositeLoginFrame };
 /** Cernere の公開設定を読み、組み込みログインUIを mount する。 */
 export function mountCernereLogin(
   mount: HTMLElement,
@@ -433,7 +330,6 @@ export function mountCernereLogin(
 ): () => void {
   const root = createRoot(mount);
   let disposed = false;
-  let client: CernereCompositeAuthClient | null = null;
   root.render(<p className="muted">Cernere を読み込み中…</p>);
 
   void (async () => {
@@ -444,26 +340,8 @@ export function mountCernereLogin(
         throw new Error('Cernere の接続先を取得できませんでした');
       }
       if (disposed) return;
-      if (config.authUiMode === 'passkey') {
-        if (!config.cernereFrontendUrl) {
-          throw new Error('Cernere ログイン画面の接続先を取得できませんでした');
-        }
-        root.render(
-          <PasskeyLoginHost
-            cernereFrontendUrl={config.cernereFrontendUrl}
-            message={message}
-          />,
-        );
-        return;
-      }
-      client = new CernereCompositeAuthClient();
-      root.render(
-        <LoginHost
-          client={client}
-          cernereFrontendUrl={config.cernereFrontendUrl}
-          message={message}
-        />,
-      );
+      if (!config.cernereFrontendUrl) throw new Error('Cernere ログイン画面の接続先を取得できませんでした');
+      root.render(<EmbeddedLoginHost cernereFrontendUrl={config.cernereFrontendUrl} message={message} />);
     } catch (cause) {
       if (!disposed) {
         root.render(
@@ -477,7 +355,6 @@ export function mountCernereLogin(
 
   return () => {
     disposed = true;
-    client?.dispose();
     root.unmount();
   };
 }
