@@ -9,6 +9,7 @@
 
 import { apiFetch, apiJson, AuthError, clearLegacyToken } from './api.ts';
 import { mountCernereLogin } from './cernere-login.tsx';
+import { installHubResumeRecovery } from './hub-resume.ts';
 import type {
   HubOverview,
   Identity,
@@ -76,8 +77,11 @@ function flashHmr(msg: string): void {
 }
 
 let unmountLogin: (() => void) | null = null;
+let stopResumeRecovery: (() => void) | null = null;
 
 function showLogin(message: string): void {
+  stopResumeRecovery?.();
+  stopResumeRecovery = null;
   unmountLogin?.();
   unmountLogin = null;
   app.innerHTML = '';
@@ -365,6 +369,7 @@ function renderShell(
   modules: ModuleInfo[],
   services: ServiceInfo[],
 ): void {
+  stopResumeRecovery?.();
   app.innerHTML = '';
 
   const header = el('header', 'topbar');
@@ -422,6 +427,8 @@ function renderShell(
   }
   activate('__overview');
   initHmr(); // §12.3 HMR の SSE 購読を開始
+  stopResumeRecovery = installHubResumeRecovery(app, () =>
+    hmrSource !== null && hmrSource.readyState !== EventSource.OPEN);
 }
 
 async function boot(): Promise<void> {
