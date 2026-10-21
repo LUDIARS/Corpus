@@ -11,6 +11,7 @@
 // ([[feedback_secret_per_user_memory_only]])。 disk / Infisical には残さない。
 
 import { createHash } from 'node:crypto';
+import { DownstreamTokenCache } from './token-cache.ts';
 
 export interface DownstreamTarget {
   /** 参照先サービス id。 */
@@ -44,11 +45,6 @@ export class PassthroughTokenProvider implements TokenProvider {
   }
 }
 
-interface CachedToken {
-  token: string;
-  expiresAt: number;
-}
-
 /**
  * 参照先トークンが取れなかった理由をログへ残す。
  *
@@ -69,9 +65,15 @@ function warnDownstreamTokenUnavailable(service: string, status: number | null):
  */
 export class CernereProjectTokenProvider implements TokenProvider {
   readonly mode = 'cernere-project-token';
-  private readonly cache = new Map<string, CachedToken>();
+  private readonly cache: DownstreamTokenCache;
+  private readonly inFlight = new Map<string, Promise<string | null>>();
 
-  constructor(private readonly cernereBaseUrl: string) {}
+  constructor(
+    private readonly cernereBaseUrl: string,
+    private readonly now: () => number = Date.now,
+  ) {
+    this.cache = new DownstreamTokenCache(now);
+  }
 
   async getDownstreamToken(
     incomingToken: string | null,
@@ -89,7 +91,21 @@ export class CernereProjectTokenProvider implements TokenProvider {
     const key = `${tokenFingerprint(incomingToken)}:${target.projectKey}:${audienceUrl}`;
     const cached = this.cache.get(key);
     // 30s の余裕を見て期限内ならキャッシュ利用
-    if (cached && cached.expiresAt > Date.now() + 30_000) return cached.token;
+    if (cached) return cached;
+    const pending = this.inFlight.get(key);
+    if (pending) return pending;
+    const issuance = this.issueToken(incomingToken, target, audienceUrl, key)
+      .finally(() => this.inFlight.delete(key));
+    this.inFlight.set(key, issuance);
+    return issuance;
+  }
+
+  private async issueToken(
+    incomingToken: string,
+    target: DownstreamTarget,
+    audienceUrl: string,
+    key: string,
+  ): Promise<string | null> {
     // hub_url (= 接続先 baseUrl) を PASETO の aud claim にするため必須で渡す
     // (Cernere Issue #91 / aud 必須化)。 Cernere は PASETO v4 (Ed25519) を mint する。
     const reqBody: Record<string, string> = {
@@ -105,6 +121,7 @@ export class CernereProjectTokenProvider implements TokenProvider {
           authorization: `Bearer ${incomingToken}`,
         },
         body: JSON.stringify(reqBody),
+        signal: AbortSignal.timeout(10_000),
       });
     } catch {
       warnDownstreamTokenUnavailable(target.service, null);
@@ -118,15 +135,14 @@ export class CernereProjectTokenProvider implements TokenProvider {
       accessToken?: string;
       expiresIn?: number;
     } | null;
-    if (!body?.accessToken) {
+    const expiresAt = this.now() + (body?.expiresIn ?? NaN) * 1000;
+    if (typeof body?.accessToken !== 'string' || !body.accessToken.trim() ||
+        typeof body.expiresIn !== 'number' || !Number.isFinite(body.expiresIn) ||
+        body.expiresIn <= 0 || !Number.isFinite(expiresAt)) {
       warnDownstreamTokenUnavailable(target.service, 502);
       return null;
     }
-    const ttlMs = (body.expiresIn ?? 900) * 1000;
-    this.cache.set(key, {
-      token: body.accessToken,
-      expiresAt: Date.now() + ttlMs,
-    });
+    this.cache.set(key, body.accessToken, expiresAt);
     return body.accessToken;
   }
 }
