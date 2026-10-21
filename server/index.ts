@@ -50,6 +50,7 @@ import { makeCapabilitiesRouter } from './routes/capabilities.ts';
 import { makeMcpRouter } from './routes/mcp.ts';
 import { CleanupScope, type CorpusRuntime } from './lifecycle.ts';
 import { ownHttpServer } from './http-lifetime.ts';
+import { installHostAccessPolicy, type CorpusStartOptions } from './host-access-policy.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -150,7 +151,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.json': 'application/json; charset=utf-8',
 };
 
-export async function startCorpus(): Promise<CorpusRuntime> {
+export async function startCorpus(options: CorpusStartOptions = {}): Promise<CorpusRuntime> {
   const scope = new CleanupScope();
   try {
   const db = openDb(DB_PATH);
@@ -480,6 +481,7 @@ export async function startCorpus(): Promise<CorpusRuntime> {
   // capability は HTTP でも MCP でも同一の Cernere identity で実行する。
   app.use('/mcp', requireAuth);
   app.use('/mcp/*', requireAuth);
+  installHostAccessPolicy(app, options.accessPolicy);
   app.route('/api/me', makeMeRouter(db));
   app.route('/api/capabilities', makeCapabilitiesRouter(registry));
   app.route('/mcp', makeMcpRouter(registry));
