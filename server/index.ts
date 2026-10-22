@@ -51,6 +51,7 @@ import { makeMcpRouter } from './routes/mcp.ts';
 import { CleanupScope, type CorpusRuntime } from './lifecycle.ts';
 import { ownHttpServer } from './http-lifetime.ts';
 import { installHostAccessPolicy, type CorpusStartOptions } from './host-access-policy.ts';
+import { installPublicReadRoutes } from './public-read-routes.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -476,6 +477,7 @@ export async function startCorpus(options: CorpusStartOptions = {}): Promise<Cor
   });
 
   // /api/* は health を除き Cernere 認証必須
+  installPublicReadRoutes(app, options.publicReadRoutes?.(db));
   app.use('/api/*', requireAuth);
   // MCP は /api/* の外側に立つので、 同じ requireAuth を明示的に被せる。
   // capability は HTTP でも MCP でも同一の Cernere identity で実行する。

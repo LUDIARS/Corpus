@@ -699,11 +699,11 @@ describe('custom component', () => {
         url: '/non-existent-module-xxx.js',
       }] }],
     }, ctx);
-    // dynamic import の reject (vitest の module resolver 経由) は
-    // microtask だけだと間に合わないことがあるので少し長めに待つ.
-    await new Promise<void>((r) => setTimeout(r, 80));
-    const err = host.querySelector('.corpus-custom .corpus-error');
-    expect(err?.textContent ?? '').toMatch(/custom 読み込み失敗/);
+    // Wait for the observable rejection, not a machine-load-dependent delay.
+    await vi.waitFor(() => {
+      const err = host.querySelector('.corpus-custom .corpus-error');
+      expect(err?.textContent ?? '').toMatch(/custom 読み込み失敗/);
+    });
   });
 });
 
