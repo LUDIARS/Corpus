@@ -52,20 +52,29 @@ CLI args (env と同等、 env より優先):
 ⚠️ `--no-cernere` / `CORPUS_NO_AUTH=1` は **ローカル開発専用**。 admin 権限の
 dev-user が全リクエストを処理する状態になるため、 本番では絶対に立てない。
 
-### 参照先トークン伝播 (`CORPUS_TOKEN_MODE`)
+### 操作ごとの下流委譲 (`CORPUS_TOKEN_MODE`)
 
-参照先サービスを叩くとき、 どのトークンを送るかを `CORPUS_TOKEN_MODE` で選ぶ
-(D5)。 **明示必須** — 未設定だと起動を拒否する (無言フォールバック禁止。 設定
-漏れが「ユーザ Bearer 素通し」 = 最も弱い経路に静かに落ちるのを防ぐ)。
+認証済み host は `CORPUS_TOKEN_MODE=cernere-service-delegation` と、管理者が
+設定する `CORPUS_DELEGATION_AUDIENCES` を起動前に指定する。後者は Cr project key
+から登録済み canonical audience origin への JSON map。値は Cr 管理者所有の
+`schema_definition.hub_url` と完全一致させる。内部の接続URLと公開 audience を
+区別し、操作ごとの本文・経路・対象に束縛した一度限りの委譲を発行する。
 
-| 値 | 意味 |
-|----|------|
-| `passthrough` | 受信 Bearer をそのまま転送 (audience が揃う構成 / 無認証ローカル直結向け) |
-| `cernere-project-token` | 参照先プロジェクト用の短命 PASETO を Cernere で発行 (本番想定) |
+設定例（値は配置先の Cr 登録に合わせる）:
 
-例外: ローカル無認証 dev (`--no-cernere` / `CORPUS_NO_AUTH=1`) のときだけ、
-未設定でも `passthrough` を既定として許す (ローカル開発を壊さないため)。 不正な
-値 (上記以外) はこの dev 例外下でも常に起動拒否する。
+```dotenv
+CORPUS_TOKEN_MODE=cernere-service-delegation
+CORPUS_DELEGATION_AUDIENCES='{"target-project":"https://target.example"}'
+```
+
+map の未指定・不正 JSON・重複 key・資格情報/path/query/fragment 付き origin は
+起動拒否。明示 `{}` は下流対象無し、未知 project は委譲照会前に拒否する。
+manifest、利用者入力、接続先 URL から audience を補完しない。Cr の現在の
+登録・同意・操作権限と、host/参照先のデータ認可も引き続き必須。
+
+ローカル無認証 dev (`--no-cernere` / `CORPUS_NO_AUTH=1`) だけは未設定または `none`
+で下流委譲を無効にできる。`passthrough` / `cernere-project-token` は受理しない。
+設定変更・全 host の pin 更新・参照先移行・動作確認を揃えるまで切替しない。
 
 ### プラグイン外部経路の service token (`CORPUS_EXTERNAL_SERVICE_AUTH_MODULES`)
 

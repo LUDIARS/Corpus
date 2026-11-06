@@ -103,3 +103,51 @@ operation. HTTP execution and Cr consumption are not one distributed transaction
 transaction-local row permissions and explicit endpoint idempotency; an unknown outcome is never retried
 automatically. Capture disposal follows every endpoint result, including endpoint failure. No slow-body
 permit extension or new signature scheme is introduced.
+
+## Explicit downstream audience configuration
+
+Authenticated `cernere-service-delegation` hosts must provide the administrator
+setting `CORPUS_DELEGATION_AUDIENCES`, a JSON object from exact Cr project key to
+expected canonical HTTP(S) origin. Missing/empty/malformed configuration fails
+startup before database/session/socket owners are opened. An explicit `{}` means no authorized destination; an unknown project
+is refused before preparing a request or consulting Cr. This map is an expected
+identifier, not the authority: Cr's administrator-owned `schema_definition.hub_url`
+remains the sole canonical audience and is rechecked with current source/target
+permissions and consent. Cr's environment/project-specific HTTPS policy remains
+in force. No scheme/loopback exception is granted by parsing an identifier here.
+
+The transport `baseUrl` remains independently validated HTTPS or loopback HTTP;
+it may reach a local proxy while the registered audience is a public HTTPS
+origin. Its origin is never an audience fallback. Neither manifest claims,
+browser input, Host/forwarded headers nor an advertised target audience can
+choose this setting. Snapshot the project/audience, actor token and action
+before request serialization yields. Ordinary and upload delegation use the
+same exact configured pair, preserving bound bytes/path/headers and no retry.
+
+The configuration accepts Cr project-key syntax and canonical origin strings
+only. Paths (including a trailing slash), credentials, query, fragment and
+noncanonical URL spelling are rejected. Standard JSON parse/stringify with
+whitespace-free validated keys/origins detects duplicate keys (even identical
+values or escaped duplicate spellings); noncanonical string escapes are also
+rejected. Pretty JSON whitespace is allowed. Errors name the setting without
+echoing its contents. There is no second JSON/URL parser, dependency or crypto.
+
+Before any host is switched, its owner must add this startup setting explicitly,
+compare every destination pair to current Cr administrator registration, retain
+the host/target action/risk/consent declarations and resource ACLs, and verify
+the real network/TLS path. GLAB and other Corpus hosts require catalog/deployment
+configuration and the accepted Corpus pin before restart; an absent map must
+not be worked around by a transport-origin/legacy credential fallback. This
+source-only change does not apply configuration, start services or prove live
+deployment. Existing consumer/target/settings/runtime cutover gates remain.
+
+| Startup owner | Required preparation | Current acceptance state |
+| --- | --- | --- |
+| Corpus standalone `server/index.ts` | Inject an explicit administrator map with the selected mode; compare values to current Cr registration | Parser/wiring/contracts implemented; live map and runtime not verified |
+| Corpus example host | Supply the same map when authenticated startup is selected; explicit `{}` only when no destination is intended | Documentation only; no example service started |
+| GLAB embedding `startCorpus` | Follow the accepted Corpus pin, add this required startup setting to deployment/catalog preparation, provide every reviewed target pair without changing canonical Cr origin policy | Host follow-up and actual administrator values pending; no restart/deploy |
+| Other hosts adopting this Corpus revision | Inventory their actual startup/configuration owner before adopting the pin and supply the explicit map | Not assumed configured; adoption/cutover remains blocked until evidenced |
+
+This table is configuration readiness, not permission to alter an existing
+project registration, secret store, deployment or service process. No actual
+administrator values or credentials are printed in this change.

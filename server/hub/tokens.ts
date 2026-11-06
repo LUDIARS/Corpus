@@ -8,6 +8,7 @@ import type { DelegatedHttpOperation } from '../../lib/cernere/packages/composit
 import { requireUploadLimits } from '../../lib/cernere/packages/composite/src/upload-body.js';
 import type { AuthorizedUploadBody } from '../service-upload-gate.ts';
 import { openBlobTransfer } from '../upload-transfer.ts';
+import { DelegationAudiences } from './delegation-audiences.ts';
 
 export interface DownstreamTarget { service: string; projectKey: string; baseUrl: string }
 export interface DownstreamRequest { path: string; action: string; init?: RequestInit; additionalHeaders?: readonly string[]; upload?: AuthorizedUploadBody }
@@ -25,12 +26,16 @@ export class DisabledUserDelegation implements TokenProvider {
 }
 export class CernereDelegationTokenProvider implements TokenProvider {
   readonly mode = 'cernere-service-delegation';
-  constructor(private readonly sessions: DelegationSessions) {}
+  constructor(private readonly sessions: DelegationSessions, private readonly audiences: DelegationAudiences) {}
 
   async authorize(session: ServiceUserSession | null, target: DownstreamTarget, operation: DownstreamRequest): Promise<AuthorizedDownstreamRequest | null> {
-    if (!session || !target.projectKey || !target.baseUrl || !operation.action) return null;
+    // Snapshot the complete destination/actor/action before body preparation can
+    // yield. A mutable caller object cannot switch the audience/project pair.
+    const sourceToken = session?.token, projectKey = target.projectKey, baseUrl = target.baseUrl, action = operation.action;
+    const audience = this.audiences.forProject(projectKey);
+    if (!sourceToken || !projectKey || !baseUrl || !action || !audience) return null;
     try {
-      const base = new URL(target.baseUrl);
+      const base = new URL(baseUrl);
       if (base.username || base.password || base.search || base.hash || !(base.protocol === 'https:'
         || (base.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)))) throw new Error('Invalid downstream URL');
       const prefix = base.pathname.replace(/\/+$/, '');
@@ -55,13 +60,13 @@ export class CernereDelegationTokenProvider implements TokenProvider {
       // these exact bytes and headers, rather than independently serializing again.
       const body = upload?.body ?? new Uint8Array(await prepared.arrayBuffer());
       prepared.signal.throwIfAborted();
-      const request = { action: operation.action, method: prepared.method as DelegatedHttpOperation['method'],
+      const request = { action, method: prepared.method as DelegatedHttpOperation['method'],
         path, resource: path, body, headers: prepared.headers, additionalHeaders: operation.additionalHeaders };
       let credential: { token: string; requestId: string };
       if (upload) {
         const limits = requireUploadLimits(upload);
         if (!this.sessions.delegateUpload || ['GET', 'HEAD'].includes(prepared.method) || !(body instanceof Blob) || body.size > limits.maximumBytes) throw new Error('Bounded upload delegation is unavailable');
-        const issued = await this.sessions.delegateUpload(session.token, { projectKey: target.projectKey, audience: base.origin }, { ...request, body }, prepared.signal);
+        const issued = await this.sessions.delegateUpload(sourceToken, { projectKey, audience }, { ...request, body }, prepared.signal);
         credential = { token: issued.arrivalToken, requestId: issued.requestId };
         const transfer = new AbortController();
         const forwarding = new Headers(prepared.headers);
@@ -73,7 +78,7 @@ export class CernereDelegationTokenProvider implements TokenProvider {
           init: { ...operation.init, method: prepared.method, headers: forwarding, credentials: 'omit', redirect: 'error',
             body: outgoing.body, duplex: 'half', signal } as RequestInit };
       }
-      const issued = await this.sessions.delegate(session.token, { projectKey: target.projectKey, audience: base.origin }, { ...request, body: body as Uint8Array });
+      const issued = await this.sessions.delegate(sourceToken, { projectKey, audience }, { ...request, body: body as Uint8Array });
       credential = { token: issued.delegationToken, requestId: issued.requestId };
       prepared.signal.throwIfAborted();
       const forwarding = new Headers(prepared.headers);
@@ -89,9 +94,13 @@ export class CernereDelegationTokenProvider implements TokenProvider {
     }
   }
 }
-export function makeTokenProvider(mode: string | undefined, sessions: DelegationSessions | null, options: { noAuth?: boolean } = {}): TokenProvider {
+export function makeTokenProvider(mode: string | undefined, sessions: DelegationSessions | null, options: { noAuth?: boolean; delegationAudiences?: string | DelegationAudiences } = {}): TokenProvider {
   const selected = mode?.trim();
   if (options.noAuth && (!selected || selected === 'none')) return new DisabledUserDelegation();
-  if (selected === 'cernere-service-delegation' && sessions) return new CernereDelegationTokenProvider(sessions);
+  if (selected === 'cernere-service-delegation' && sessions) {
+    const audiences = options.delegationAudiences instanceof DelegationAudiences
+      ? options.delegationAudiences : new DelegationAudiences(options.delegationAudiences);
+    return new CernereDelegationTokenProvider(sessions, audiences);
+  }
   throw new Error('CORPUS_TOKEN_MODE=cernere-service-delegation and bound source sessions are required; none is allowed only with explicit no-auth dev mode');
 }

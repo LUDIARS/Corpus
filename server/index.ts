@@ -33,6 +33,7 @@ import { HubRegistry } from './hub/registry.ts';
 import { startHealthLoop } from './hub/aggregate.ts';
 import { readDiscoveryConfig, startDiscoveryLoop } from './hub/discovery.ts';
 import { makeTokenProvider, type TokenProvider } from './hub/tokens.ts';
+import { DelegationAudiences } from './hub/delegation-audiences.ts';
 import { getCorpusDisplayName, SelfConnector } from './connectors/builtin.ts';
 import { makeHubRouter } from './routes/hub.ts';
 import { expandPanelRefs, isPanelDescriptor } from './hub/shared-ui-expand.ts';
@@ -138,6 +139,8 @@ const CONTENT_TYPES: Record<string, string> = {
 export async function startCorpus(options: CorpusStartOptions = {}): Promise<CorpusRuntime> {
   const operationPolicy = options.operationPolicy;
   if (!NO_AUTH && !operationPolicy) throw new Error('A host-owned operation policy is required in authenticated mode');
+  // Configuration errors must fail before opening DB/session/socket owners.
+  const delegationAudiences = NO_AUTH ? undefined : new DelegationAudiences(process.env.CORPUS_DELEGATION_AUDIENCES);
   const scope = new CleanupScope();
   try {
   const db = openDb(DB_PATH);
@@ -190,7 +193,7 @@ export async function startCorpus(options: CorpusStartOptions = {}): Promise<Cor
     tokenProvider = makeTokenProvider(
       process.env.CORPUS_TOKEN_MODE,
       serviceSessions,
-      { noAuth: NO_AUTH },
+      { noAuth: NO_AUTH, delegationAudiences },
     );
   } catch (e) {
     console.error(`[corpus] ${(e as Error).message}`);

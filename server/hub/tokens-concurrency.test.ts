@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CernereDelegationTokenProvider } from './tokens.ts';
 import type { ServiceUserSession } from '../auth.ts';
+import { DelegationAudiences } from './delegation-audiences.ts';
 const session: ServiceUserSession = { token: 's'.repeat(43), grant: { projectToken: 'source', sessionBinding: 'b'.repeat(43), projectKey: 'glab',
   user: { id: 'subject', role: 'member', displayName: 'User', email: null }, expiresAt: new Date(Date.now() + 600_000).toISOString() } };
 describe('one-use delegation concurrency', () => {
@@ -8,7 +9,7 @@ describe('one-use delegation concurrency', () => {
     let counter = 0;
     const delegate = vi.fn(async () => ({ delegationToken: Buffer.alloc(32, ++counter).toString('base64url'),
       requestId: `00000000-0000-4000-8000-${String(counter).padStart(12, '0')}`, expiresAt: new Date(Date.now() + 30_000).toISOString() }));
-    const provider = new CernereDelegationTokenProvider({ delegate });
+    const provider = new CernereDelegationTokenProvider({ delegate }, new DelegationAudiences('{"aedilis":"https://aedilis.example"}'));
     const results = await Promise.all(Array.from({ length: 100 }, () => provider.authorize(session,
       { service: 'aedilis', projectKey: 'aedilis', baseUrl: 'https://aedilis.example' }, { path: '/records', action: 'records.read' })));
     expect(delegate).toHaveBeenCalledTimes(100);
