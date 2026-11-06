@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
+import { createHash } from 'node:crypto';
 import { CompositeAuthorityError } from '../lib/cernere/packages/composite/src/service-session.js';
 import type { AuthIdentity, ServiceUserSession } from './auth.ts';
 import { getIdentity, getUserSession } from './auth.ts';
@@ -15,7 +16,7 @@ const decision = { projectKey: 'target', sourceProject: 'source', user: session.
 
 function fixture() {
   let current = true;
-  const resource = vi.fn(() => true);
+  const resource = vi.fn((_context: Context, _identity: AuthIdentity) => true);
   const gate: ServiceOperationGate = {
     policy: () => ({ action: 'member.record.read', risk: 'sensitive_read', maximumBodyBytes: 4096, authorizeResource: resource }),
     sessions: { run: vi.fn(async (_token, _operation, operation) => {
@@ -32,7 +33,9 @@ function fixture() {
   const app = new Hono();
   app.use('*', async (c, next) => runServiceOperation(c, next, gate,
     c.req.header('authorization')?.startsWith('Cernere-Delegation ')
-      ? { delegation: 'd'.repeat(43), requestId } : { session, identity }));
+      ? { delegation: 'd'.repeat(43), requestId }
+      : c.req.header('authorization')?.startsWith('Cernere-Upload ')
+        ? { upload: 'u'.repeat(43), requestId } : { session, identity }));
   app.all('*', async c => {
     executed();
     return c.json({ userId: getIdentity(c).userId, session: getUserSession(c), body: await c.req.text() });
@@ -61,6 +64,51 @@ describe('shared bound operation gate (contract only; no external authority)', (
     expect((await response.json() as { body: string }).body).toBe(new TextDecoder().decode(bytes));
     expect(f.gate.sessions.run).toHaveBeenCalledWith(session.token,
       expect.objectContaining({ resource: '/api/record?q=1', body: bytes }), expect.any(Object));
+  });
+  it('binds the complete private callback query without disclosing it to authority or changing route input', async () => {
+    const f = fixture();
+    f.gate.policy = () => ({ action: 'account.callback.complete', risk: 'important', maximumBodyBytes: 0,
+      privateQuery: true, authorizeResource: f.resource });
+    const queries = ['?state=one&code=first', '?state=one&code=second', '?code=first&state=one',
+      '?state=one&code=first&code=second', '?state=one&code=%66irst', ''];
+    const resources: string[] = [];
+    const observed: string[] = [];
+    f.resource.mockImplementation(c => { observed.push(new URL(c.req.url).search); return true; });
+    for (const search of queries) {
+      expect((await f.app.request('/callback' + search)).status).toBe(200);
+      const operation = vi.mocked(f.gate.sessions.run).mock.calls.at(-1)![1];
+      expect(operation).toEqual({ action: 'account.callback.complete', body: new Uint8Array(),
+        resource: '/callback#query-sha256=' + createHash('sha256').update(search, 'utf8').digest('hex') });
+      resources.push(operation.resource);
+      expect(JSON.stringify(operation)).not.toContain('state=');
+      expect(JSON.stringify(operation)).not.toContain('code=');
+    }
+    expect(new Set(resources).size).toBe(queries.length);
+    expect(observed).toEqual(queries);
+    expect(f.gate.delegations.run).not.toHaveBeenCalled();
+  });
+  it('rejects private-query policy on delegation, uploads, non-important GET or nonempty-body classifications', async () => {
+    const variants = [
+      { method: 'GET', risk: 'important', maximumBodyBytes: 0, delegation: true },
+      { method: 'GET', risk: 'important', maximumBodyBytes: 0, uploadCredential: true },
+      { method: 'POST', risk: 'important', maximumBodyBytes: 0 },
+      { method: 'GET', risk: 'sensitive_read', maximumBodyBytes: 0 },
+      { method: 'GET', risk: 'important', maximumBodyBytes: 1 },
+      { method: 'GET', risk: 'important', maximumBodyBytes: 0, upload: { maximumBytes: 10, timeoutSeconds: 10 } },
+      { method: 'GET', risk: 'important', maximumBodyBytes: 0, invalidFlag: true },
+    ] as const;
+    for (const variant of variants) {
+      const f = fixture();
+      f.gate.policy = () => ({ action: 'account.callback.complete', risk: variant.risk,
+        maximumBodyBytes: variant.maximumBodyBytes, privateQuery: ('invalidFlag' in variant ? false : true) as true,
+        ...('upload' in variant ? { upload: variant.upload } : {}), authorizeResource: f.resource });
+      const response = await f.app.request('/callback?state=one&code=first', { method: variant.method,
+        ...('delegation' in variant ? { headers: { authorization: 'Cernere-Delegation opaque' } }
+          : 'uploadCredential' in variant ? { headers: { authorization: 'Cernere-Upload opaque' } } : {}) });
+      expect(response.status).toBe(403);
+      expect(f.gate.sessions.run).not.toHaveBeenCalled(); expect(f.gate.delegations.run).not.toHaveBeenCalled();
+      expect(f.resource).not.toHaveBeenCalled(); expect(f.executed).not.toHaveBeenCalled();
+    }
   });
   it('rejects an oversized chunked body before contacting authority', async () => {
     const f = fixture();

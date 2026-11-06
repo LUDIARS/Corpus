@@ -2,6 +2,7 @@
  * Domain data authorization belongs to the host callback and endpoint transaction.
  * @implements SPEC-HUB-BOUND-SERVICE-SESSION
  */
+import { createHash } from 'node:crypto';
 import type { Context, Next } from 'hono';
 import type { CompositeDelegations, DelegationDecision, DelegatedHttpOperation } from '../lib/cernere/packages/composite/src/delegation.js';
 import { CompositeAuthorityError, isServiceOperationRisk, type ServiceOperationRisk } from '../lib/cernere/packages/composite/src/service-session.js';
@@ -19,6 +20,10 @@ export interface ClassifiedServiceOperation {
   /** Explicit per-route upload limit; never trust Content-Length alone. */
   maximumBodyBytes: number;
   additionalHeaders?: readonly string[];
+  /** Own-session important GET only: bind exact query bytes without disclosing them to Cr.
+   * The host still validates callback state and rejects ambiguous parameters.
+   */
+  privateQuery?: true;
   /** Explicitly opt into bounded private capture; ordinary routes stay small. */
   upload?: UploadLimits;
   /** Read current domain/resource permissions, not just the Cr role/active flag.
@@ -47,13 +52,21 @@ export async function runServiceOperation(
   if (!classified || !classified.action || !isServiceOperationRisk(classified.risk) || typeof classified.authorizeResource !== 'function') {
     return c.json({ error: 'operation_unclassified' }, 403);
   }
+  if (classified.privateQuery !== undefined && (classified.privateQuery !== true || !('session' in credential)
+    || c.req.method !== 'GET' || classified.risk !== 'important' || classified.maximumBodyBytes !== 0 || classified.upload)) {
+    return c.json({ error: 'private_query_operation_unclassified' }, 403);
+  }
   if (classified.upload || 'upload' in credential) return runServiceUpload(c, next, gate, credential, classified);
   let executing = false;
   let resourceDenied = false;
   try {
     const body = await readOperationBody(c, classified.maximumBodyBytes);
     const url = new URL(c.req.url);
-    const resource = url.pathname + url.search;
+    // Do not parse/sort/re-encode search parameters: duplicates, order and escaped
+    // spellings are part of the actual request. Only this identifier leaves the host.
+    const resource = classified.privateQuery
+      ? `${url.pathname}#query-sha256=${createHash('sha256').update(url.search, 'utf8').digest('hex')}`
+      : url.pathname + url.search;
     const authorize = async (identity: AuthIdentity): Promise<boolean> => {
       if (!gate.isCurrent()) throw new Error('Authentication owner ended');
       c.set('auth', identity);

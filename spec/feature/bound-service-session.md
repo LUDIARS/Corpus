@@ -151,3 +151,33 @@ deployment. Existing consumer/target/settings/runtime cutover gates remain.
 This table is configuration readiness, not permission to alter an existing
 project registration, secret store, deployment or service process. No actual
 administrator values or credentials are printed in this change.
+
+## Private query binding for own-session callbacks
+
+A host may explicitly classify an OAuth callback as `privateQuery: true` only
+with an own service session, `risk: important`, method GET and a zero-byte body
+limit. The ordinary live Cr permit/consumption and latest host ACL remain
+mandatory. The resource sent to Cr is the actual URL pathname followed by
+`#query-sha256=` and the standard SHA-256 hex digest of the UTF-8 `URL.search`
+string, including its leading question mark when present. Neither code nor
+state values leave the host in this operation identifier. No query parser,
+sorting, decoding or reconstruction is used: duplicate values, ordering and
+percent-encoded spelling changes bind a different resource. The endpoint sees
+the original URL and must independently enforce exactly one state/code (or the
+documented provider-error shape), state expiry, source, redirect and same-user
+binding before any OAuth exchange. Hashing does not validate an OAuth response.
+
+An incoming delegation/upload, upload policy, other method/risk/body limit or
+invalid flag is refused before authority/data execution. The digest identifier
+cannot be used as a transport path or silently substituted into a delegation's
+exact path contract. Existing ordinary and upload operation contracts remain
+unchanged. Cookie SameSite=Lax permits a normal top-level cross-site GET return;
+state validation remains its CSRF boundary, with no general GET exemption from
+important-operation classification. Host request logs and error responses must
+also avoid callback query secrets; this change does not change logging policy.
+
+This framework option alone enables no route. Hosts must adopt the accepted
+Corpus pin and provide their explicit callback classification, provider-state
+validation and current domain authorization. Managed Meet host/target wiring,
+administrator settings, real provider roundtrip and coordinated cutover remain
+pending; no service is started or deployed by this change.
