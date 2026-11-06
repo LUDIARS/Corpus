@@ -30,6 +30,7 @@ import type {
   ServiceConnector,
 } from './types.ts';
 import type { TokenProvider } from './tokens.ts';
+import type { ServiceIdentityProvider } from '../service-identity-provider.ts';
 
 interface LoadedModule {
   module: CorpusModule;
@@ -58,7 +59,7 @@ export class HubRegistry {
   private readonly discovered = new Map<string, ManifestConnector>();
   private readonly loaded: LoadedModule[] = [];
 
-  constructor(private readonly db: CorpusDb) {}
+  constructor(private readonly db: CorpusDb, private readonly identityProvider?: ServiceIdentityProvider) {}
 
   /** 組み込みコネクタ (プラグイン外) を直接足す。 */
   addConnector(connector: ServiceConnector): void {
@@ -276,11 +277,13 @@ export class HubRegistry {
           path: `/api/x/${module.id}${rel}`,
           title: d.title ?? d.id,
           scope: d.scope ?? 'multi',
+          delegation: d.delegation,
         });
       },
       env: (key) => process.env[key],
       logger: makeLogger(`mod:${module.id}`),
       tokenProvider,
+      identityProvider: this.identityProvider,
     };
     await module.setup(ctx);
     // setup がここまで throw せず到達したら、 登録物を一括 commit する。

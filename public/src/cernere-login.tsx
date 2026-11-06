@@ -1,360 +1,65 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-
 import { CompositeLoginFrame } from '../../lib/cernere/packages/composite/src/ui/CompositeLoginFrame.tsx';
-import type { CompositeAuthApi, CompositeAuthResponse, DeviceAnomaly, DeviceFingerprint } from './legacy-composite-types.ts';
 import { clearLegacyToken } from './api.ts';
 
-interface CompositeStartResponse extends CompositeAuthResponse {
-  ticket?: string;
-  wsPath?: string;
-}
+interface PublicConfig { cernereFrontendUrl?: string; cernereClientId?: string }
 
-interface PublicConfig {
-  cernereFrontendUrl?: string;
-  authUiMode?: 'composite' | 'passkey';
-}
-
-type PendingKind = 'authenticate' | 'verify' | 'resend';
-
-interface PendingRequest {
-  resolve: (response: CompositeAuthResponse) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-type CompositeServerMessage =
-  | {
-      type: 'state';
-      state: string;
-      data?: {
-        deviceToken?: string;
-        emailMasked?: string;
-        anomalies?: DeviceAnomaly[];
-        codeChannel?: 'email' | 'console';
-        deviceLabel?: string;
-        error?: string;
-        remainingAttempts?: number;
-      };
-    }
-  | { type: 'authenticated'; authCode: string }
-  | { type: 'error'; retryable: boolean; reason: string }
-  | { type: 'ping'; ts: number };
-
-export interface CernereCompositeClientDeps {
-  fetch?: typeof fetch;
-  openWebSocket?: (url: string, protocols: string[]) => WebSocket;
-  webSocketBaseUrl?: string;
-}
-
-const WS_OPEN = 1;
-const REQUEST_TIMEOUT_MS = 30_000;
-const COMPOSITE_STATE_PARAM = 'cernere_composite_state';
-
-export function buildPasskeyRedirectUrl(
-  cernereFrontendUrl: string,
-  currentUrl: string,
-  state: string,
-): string {
-  const callbackUrl = new URL(currentUrl);
-  callbackUrl.searchParams.delete('code');
-  callbackUrl.searchParams.set(COMPOSITE_STATE_PARAM, state);
-  const loginUrl = new URL('/composite/login', cernereFrontendUrl);
-  loginUrl.searchParams.set('redirect_uri', callbackUrl.toString());
-  loginUrl.searchParams.set('auth_mode', 'passkey');
-  return loginUrl.toString();
-}
-
-/** 現行 Cernere の ticket WebSocket を公開 CompositeLogin の authApi に変換する。 */
-export class CernereCompositeAuthClient implements CompositeAuthApi {
-  private readonly fetchImpl: typeof fetch;
-  private readonly openWebSocket: (url: string, protocols: string[]) => WebSocket;
-  private readonly webSocketBaseUrl: string;
-  private socket: WebSocket | null = null;
-  private pending: PendingRequest | null = null;
-  private deviceToken = '';
-
-  constructor(deps: CernereCompositeClientDeps = {}) {
-    const fetchImpl = deps.fetch ?? globalThis.fetch;
-    this.fetchImpl = fetchImpl.bind(globalThis);
-    this.openWebSocket =
-      deps.openWebSocket ?? ((url, protocols) => new WebSocket(url, protocols));
-    this.webSocketBaseUrl = deps.webSocketBaseUrl ?? globalThis.location.origin;
-  }
-
-  login(params: {
-    email: string;
-    password: string;
-    device?: DeviceFingerprint;
-  }): Promise<CompositeAuthResponse> {
-    return this.start('login', params, params.device);
-  }
-
-  register(params: {
-    name: string;
-    email: string;
-    password: string;
-    device?: DeviceFingerprint;
-  }): Promise<CompositeAuthResponse> {
-    return this.start('register', params, params.device);
-  }
-
-  mfaVerify(params: {
-    mfaToken: string;
-    method: string;
-    code: string;
-    device?: DeviceFingerprint;
-  }): Promise<CompositeAuthResponse> {
-    return this.start('mfa-verify', params, params.device);
-  }
-
-  deviceVerify(params: {
-    deviceToken: string;
-    code: string;
-  }): Promise<CompositeAuthResponse> {
-    this.assertActiveChallenge(params.deviceToken);
-    return this.sendAndWait('verify', {
-      type: 'verify_code',
-      code: params.code,
-    });
-  }
-
-  deviceResend(params: { deviceToken: string }): Promise<CompositeAuthResponse> {
-    this.assertActiveChallenge(params.deviceToken);
-    return this.sendAndWait('resend', { type: 'resend' });
-  }
-
-  dispose(): void {
-    this.rejectPending(new Error('Authentication was cancelled'));
-    this.socket?.close(1000, 'disposed');
-    this.socket = null;
-    this.deviceToken = '';
-  }
-
-  private async start(
-    action: 'login' | 'register' | 'mfa-verify',
-    params: Record<string, unknown>,
-    device: DeviceFingerprint | undefined,
-  ): Promise<CompositeAuthResponse> {
-    this.dispose();
-    const response = await this.post<CompositeStartResponse>(
-      `/auth/composite/${action}`,
-      params,
-    );
-    if (response.mfaRequired) return response;
-    if (!response.ticket || !response.wsPath) {
-      throw new Error('Cernere did not return a composite session');
-    }
-    if (!device) {
-      throw new Error('Device information could not be collected');
-    }
-    return this.openSession(response.ticket, response.wsPath, device);
-  }
-
-  private openSession(
-    ticket: string,
-    wsPath: string,
-    device: DeviceFingerprint,
-  ): Promise<CompositeAuthResponse> {
-    const returnedPath = new URL(wsPath, 'http://cernere.invalid').pathname;
-    if (returnedPath !== '/auth/composite-ws') {
-      throw new Error('Cernere returned an invalid WebSocket path');
-    }
-    const url = new URL('/auth/composite-ws', this.webSocketBaseUrl);
-    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.searchParams.delete('ticket');
-
-    const result = this.waitFor('authenticate');
-    const socket = this.openWebSocket(url.toString(), ['ticket', ticket]);
-    this.socket = socket;
-    socket.onmessage = (event) => {
-      let message: CompositeServerMessage;
-      try {
-        message = JSON.parse(String(event.data)) as CompositeServerMessage;
-      } catch {
-        return;
-      }
-      this.handleMessage(message, device);
-    };
-    socket.onerror = () => {
-      this.rejectPending(new Error('Cernere WebSocket connection failed'));
-    };
-    socket.onclose = (event) => {
-      if (this.socket === socket) this.socket = null;
-      if (this.pending) {
-        this.rejectPending(
-          new Error(event.reason || 'Cernere WebSocket connection closed'),
-        );
-      }
-    };
-    return result;
-  }
-
-  private handleMessage(
-    message: CompositeServerMessage,
-    device: DeviceFingerprint,
-  ): void {
-    if (message.type === 'ping') {
-      if (this.socket?.readyState === WS_OPEN) {
-        this.socket.send(JSON.stringify({ type: 'pong', ts: message.ts }));
-      }
-      return;
-    }
-    if (message.type === 'error') {
-      this.rejectPending(new Error(message.reason));
-      return;
-    }
-    if (message.type === 'authenticated') {
-      this.resolvePending({ authCode: message.authCode });
-      return;
-    }
-    if (message.state === 'pending_device') {
-      this.socket?.send(JSON.stringify({ type: 'device', payload: device }));
-      return;
-    }
-    if (message.state !== 'challenge_pending') return;
-
-    const data = message.data ?? {};
-    if (data.deviceToken) this.deviceToken = data.deviceToken;
-    if (!this.deviceToken) {
-      this.rejectPending(new Error('Cernere did not return a device challenge'));
-      return;
-    }
-    this.resolvePending({
-      deviceVerificationRequired: true,
-      deviceToken: this.deviceToken,
-      emailMasked: data.emailMasked,
-      anomalies: data.anomalies,
-      codeChannel: data.codeChannel,
-      deviceLabel: data.deviceLabel,
-      error: data.error,
-      remainingAttempts: data.remainingAttempts,
-    });
-  }
-
-  private sendAndWait(
-    kind: Exclude<PendingKind, 'authenticate'>,
-    message: Record<string, unknown>,
-  ): Promise<CompositeAuthResponse> {
-    if (!this.socket || this.socket.readyState !== WS_OPEN) {
-      return Promise.reject(new Error('Cernere authentication session is not connected'));
-    }
-    const result = this.waitFor(kind);
-    this.socket.send(JSON.stringify(message));
-    return result;
-  }
-
-  private waitFor(_kind: PendingKind): Promise<CompositeAuthResponse> {
-    if (this.pending) {
-      return Promise.reject(new Error('Another authentication request is in progress'));
-    }
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.rejectPending(new Error('Cernere authentication timed out'));
-      }, REQUEST_TIMEOUT_MS);
-      this.pending = { resolve, reject, timer };
-    });
-  }
-
-  private resolvePending(response: CompositeAuthResponse): void {
-    const pending = this.pending;
-    if (!pending) return;
-    clearTimeout(pending.timer);
-    this.pending = null;
-    pending.resolve(response);
-  }
-
-  private rejectPending(error: Error): void {
-    const pending = this.pending;
-    if (!pending) return;
-    clearTimeout(pending.timer);
-    this.pending = null;
-    pending.reject(error);
-  }
-
-  private assertActiveChallenge(deviceToken: string): void {
-    if (!deviceToken || deviceToken !== this.deviceToken) {
-      throw new Error('Cernere device challenge is no longer active');
-    }
-  }
-
-  private async post<T>(path: string, body: Record<string, unknown>): Promise<T> {
-    const response = await this.fetchImpl(path, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = (await response.json().catch(() => ({}))) as T & {
-      error?: string;
-    };
-    if (!response.ok) {
-      throw new Error(data.error || `Cernere request failed (${response.status})`);
-    }
-    return data;
-  }
-}
-
-async function exchangeAuthCode(authCode: string): Promise<void> {
+/** The verifier stays in the service's browser context until this same-origin exchange.
+ * @implements SPEC-HUB-BOUND-SERVICE-SESSION
+ */
+export async function completeServiceLogin(code: string, verifier: string, signal?: AbortSignal): Promise<void> {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(code) || !/^[A-Za-z0-9._~-]{43,128}$/.test(verifier)) throw new Error('新しいログインを開始してください');
+  const timeout = AbortSignal.timeout(45_000);
   const response = await fetch('/auth/exchange', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ code: authCode }),
+    method: 'POST', credentials: 'same-origin', redirect: 'error',
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, code_verifier: verifier }),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });
-  const data = (await response.json().catch(() => ({}))) as {
-    ok?: boolean;
-    error?: string;
-  };
-  if (!response.ok || !data.ok) {
-    throw new Error(data.error || 'Cernere token exchange failed');
+  const data = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || data?.ok !== true || typeof data.expiresAt !== 'string'
+    || !Number.isFinite(Date.parse(data.expiresAt)) || Date.parse(data.expiresAt) <= Date.now() || Date.parse(data.expiresAt) > Date.now() + 900_000
+    || ['accessToken', 'refreshToken', 'projectToken', 'sessionToken'].some(key => key in data)) {
+    // The code may already be consumed. Do not retry or retain returned credentials.
+    throw new Error('ログインを完了できませんでした。元の画面からやり直してください');
   }
   clearLegacyToken();
-  location.reload();
 }
 
 /** @implements SPEC-HUB-EMBEDDED-LOGIN-001 */
-function EmbeddedLoginHost({ cernereFrontendUrl, message }: { cernereFrontendUrl: string; message: string }) {
+function EmbeddedLoginHost({ config, message, signal }: { config: Required<PublicConfig>; message: string; signal: AbortSignal }) {
   const [error, setError] = useState('');
   return <>
     {message && <p className="muted">{message}</p>}
     {error && <p className="error" role="alert">{error}</p>}
-    <CompositeLoginFrame cernereUrl={cernereFrontendUrl} onAuthCode={exchangeAuthCode}
-      onError={cause => setError(cause.message)} />
+    <CompositeLoginFrame cernereUrl={config.cernereFrontendUrl} clientId={config.cernereClientId}
+      onAuthCode={async (code, verifier) => {
+        await completeServiceLogin(code, verifier, signal);
+        if (!signal.aborted) window.location.reload();
+      }} onError={cause => { if (!signal.aborted) setError(cause.message); }} />
   </>;
 }
-
 export { CompositeLoginFrame };
-/** Cernere の公開設定を読み、組み込みログインUIを mount する。 */
-export function mountCernereLogin(
-  mount: HTMLElement,
-  message: string,
-): () => void {
-  const root = createRoot(mount);
-  let disposed = false;
-  root.render(<p className="muted">Cernere を読み込み中…</p>);
 
+/** @implements SPEC-HUB-EMBEDDED-LOGIN-001 */
+export function mountCernereLogin(mount: HTMLElement, message: string): () => void {
+  const root = createRoot(mount);
+  const lifetime = new AbortController();
+  clearLegacyToken();
+  root.render(<p className="muted">Cernere を読み込み中…</p>);
   void (async () => {
     try {
-      const response = await fetch('/api/public-config');
-      const config = (await response.json()) as PublicConfig;
-      if (!response.ok) {
-        throw new Error('Cernere の接続先を取得できませんでした');
+      const response = await fetch('/api/public-config', { credentials: 'same-origin', redirect: 'error',
+        signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(10_000)]) });
+      const config = await response.json() as PublicConfig;
+      if (!response.ok || !config.cernereFrontendUrl || !config.cernereClientId) {
+        throw new Error('サービスのログイン設定を取得できませんでした');
       }
-      if (disposed) return;
-      if (!config.cernereFrontendUrl) throw new Error('Cernere ログイン画面の接続先を取得できませんでした');
-      root.render(<EmbeddedLoginHost cernereFrontendUrl={config.cernereFrontendUrl} message={message} />);
+      if (lifetime.signal.aborted) return;
+      root.render(<EmbeddedLoginHost config={{ cernereFrontendUrl: config.cernereFrontendUrl, cernereClientId: config.cernereClientId }} message={message} signal={lifetime.signal} />);
     } catch (cause) {
-      if (!disposed) {
-        root.render(
-          <p className="error">
-            {cause instanceof Error ? cause.message : String(cause)}
-          </p>,
-        );
-      }
+      if (!lifetime.signal.aborted) root.render(<p className="error">{cause instanceof Error ? cause.message : 'ログイン画面を取得できませんでした'}</p>);
     }
   })();
-
-  return () => {
-    disposed = true;
-    root.unmount();
-  };
+  return () => { lifetime.abort(); root.unmount(); };
 }

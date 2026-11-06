@@ -3,7 +3,7 @@
 // 起動シーケンス:
 //   1. env / dirs を解決
 //   2. SQLite 開いて schema 適用
-//   3. Cernere 公開鍵 fetch ループ start
+//   3. scoped Cr grant に bind したサービスセッションと共通 gate を構成
 //   4. HubRegistry を組み立て、 組み込みコネクタ + プラグインパックをロード
 //   5. router を mount → listen → health ループ start
 
@@ -19,19 +19,11 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
 import { openDb } from './db.ts';
-import {
-  clearAuthCookies,
-  getRefreshToken,
-  persistAuthCookies,
-  requireAuth,
-  startAuth,
-  type AuthTokenPair,
-} from './auth.ts';
-import { ProjectAuthClient, type CompositeAuthAction } from './project-auth-client.ts';
-import {
-  attachCompositeWebSocketProxy,
-  type CompositeWebSocketProxyDiagnostic,
-} from './composite-ws-proxy.ts';
+import { requireAuth, startAuth } from './auth.ts';
+import { CernereComposite } from '../lib/cernere/packages/composite/src/composite.js';
+import { ServiceSessionStore } from './service-session-store.ts';
+import { makeServiceSessionRoutes } from './service-session-routes.ts';
+import { makeServiceIdentityProvider } from './service-identity-provider.ts';
 import { writeDiagnostic } from './lib/logging.ts';
 import { resolveRequestOrigin } from './request-origin.ts';
 import { checkEdgeDevIdentity, makeEdgeHeaderGuard, parseAuthMode } from './edge-guard.ts';
@@ -87,17 +79,8 @@ const NO_AUTH = process.env.CORPUS_NO_AUTH === '1';
 const CERNERE_BASE_URL = NO_AUTH
   ? (process.env.CERNERE_BASE_URL?.trim() || 'http://noauth.invalid')
   : requireEnv('CERNERE_BASE_URL');
-const AUTH_UI_MODE = (() => {
-  const value = process.env.CORPUS_AUTH_UI_MODE?.trim() || 'composite';
-  if (value !== 'composite' && value !== 'passkey') {
-    console.error('[corpus] CORPUS_AUTH_UI_MODE は composite または passkey を指定してください。');
-    throw new Error('Invalid CORPUS_AUTH_UI_MODE');
-  }
-  return value;
-})();
-const CERNERE_FRONTEND_URL = AUTH_UI_MODE === 'passkey' && !NO_AUTH
-  ? requireEnv('CERNERE_FRONTEND_URL')
-  : (process.env.CERNERE_FRONTEND_URL?.trim() || '');
+const CERNERE_FRONTEND_URL = NO_AUTH ? '' : requireEnv('CERNERE_FRONTEND_URL');
+const CERNERE_CLIENT_ID = NO_AUTH ? '' : requireEnv('CERNERE_PROJECT_CLIENT_ID');
 const AUDIENCE = NO_AUTH
   ? (process.env.CORPUS_PUBLIC_URL?.trim() || `http://localhost:${PORT}`)
   : requireEnv('CORPUS_PUBLIC_URL');
@@ -153,19 +136,32 @@ const CONTENT_TYPES: Record<string, string> = {
 };
 
 export async function startCorpus(options: CorpusStartOptions = {}): Promise<CorpusRuntime> {
+  const operationPolicy = options.operationPolicy;
+  if (!NO_AUTH && !operationPolicy) throw new Error('A host-owned operation policy is required in authenticated mode');
   const scope = new CleanupScope();
   try {
   const db = openDb(DB_PATH);
   scope.defer(() => { db.close(); });
+  let serviceSessions: ServiceSessionStore | null = null;
   if (NO_AUTH) {
     console.log('[corpus] CORPUS_NO_AUTH=1 — Cernere 認証 bypass、 dev identity で起動');
   } else {
+    if (!operationPolicy) throw new Error('A host-owned operation policy is required');
+    const composite = new CernereComposite({ cernereUrl: CERNERE_BASE_URL, projectKey: requireEnv('CERNERE_PROJECT_KEY'),
+      clientId: CERNERE_CLIENT_ID, clientSecret: requireEnv('CERNERE_PROJECT_CLIENT_SECRET') });
+    scope.defer(() => composite.dispose());
+    const ownSessions = new ServiceSessionStore(composite, requireEnv('CERNERE_PROJECT_KEY'));
+    serviceSessions = ownSessions;
+    scope.defer(() => ownSessions.close());
     const stopAuth = startAuth({
-      cernereBaseUrl: CERNERE_BASE_URL,
+      sessions: ownSessions,
+      delegations: composite.delegations,
+      uploads: composite.uploads,
+      operationPolicy,
       adminIds: ADMIN_IDS,
       db,
       issuer: CERNERE_ISSUER,
-      cookieSecure: new URL(AUDIENCE).protocol === 'https:',
+      publicOrigin: AUDIENCE,
       externalService: EXTERNAL_SERVICE_AUTH && {
         modules: EXTERNAL_SERVICE_AUTH.modules,
         headerNames: EXTERNAL_SERVICE_AUTH.headerNames,
@@ -183,28 +179,18 @@ export async function startCorpus(options: CorpusStartOptions = {}): Promise<Cor
     scope.defer(stopAuth);
   }
 
-  const projectAuth = NO_AUTH ? null : new ProjectAuthClient({
-    cernereBaseUrl: CERNERE_BASE_URL,
-    clientId: requireEnv('CERNERE_PROJECT_CLIENT_ID'),
-    clientSecret: requireEnv('CERNERE_PROJECT_CLIENT_SECRET'),
-  });
-  if (projectAuth) {
-    scope.defer(() => projectAuth.close());
-    await projectAuth.connect();
-  }
-
   // 認証トークン伝播 (D5) — プラグインの setup に渡す CorpusContext.tokenProvider
   // になるため、 プラグインロードより前に組み立てる。 plugin proxy 経路と
   // `/api/hub/data` 集約経路で同一インスタンスを共有する (経路依存の auth を作らない)。
   // CORPUS_TOKEN_MODE は明示必須 (無言フォールバック禁止 RULE §7.1)。 未設定で
-  // 起動できるのは dev 無認証経路 (CORPUS_NO_AUTH=1) のときだけ — その場合のみ
-  // passthrough を暗黙既定として許す。
+  // 起動できるのは dev 無認証経路 (CORPUS_NO_AUTH=1) のときだけ。その場合も
+  // protected downstream の匿名呼出しには切り替えない。
   let tokenProvider: TokenProvider;
   try {
     tokenProvider = makeTokenProvider(
       process.env.CORPUS_TOKEN_MODE,
-      CERNERE_BASE_URL,
-      { allowImplicitPassthrough: NO_AUTH },
+      serviceSessions,
+      { noAuth: NO_AUTH },
     );
   } catch (e) {
     console.error(`[corpus] ${(e as Error).message}`);
@@ -212,7 +198,7 @@ export async function startCorpus(options: CorpusStartOptions = {}): Promise<Cor
   }
 
   // hub 機構: 組み込みコネクタ + プラグインパック
-  const registry = new HubRegistry(db);
+  const registry = new HubRegistry(db, serviceSessions ? makeServiceIdentityProvider(serviceSessions) : undefined);
   registry.addConnector(new SelfConnector());
   await registry.loadPluginPacks(process.env.CORPUS_PLUGIN_DIR, tokenProvider);
 
@@ -269,130 +255,12 @@ export async function startCorpus(options: CorpusStartOptions = {}): Promise<Cor
       // 起点 URL を知らないと導線を出せない。 未設定なら従来どおり省略する
       // (受け手はキー不在をパスキー無効として扱う)。
       cernereFrontendUrl: CERNERE_FRONTEND_URL || undefined,
-      authUiMode: AUTH_UI_MODE,
+      cernereClientId: CERNERE_CLIENT_ID || undefined,
       publicUrl: AUDIENCE,
     });
   });
 
-  async function proxyCernerePost(
-    c: Context,
-    path: string,
-    failureCode: string,
-  ): Promise<Response> {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return Response.json({ error: 'invalid_json' }, { status: 400 });
-    }
-    try {
-      const upstream = await fetch(`${CERNERE_BASE_URL}${path}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      return new Response(await upstream.text(), {
-        status: upstream.status,
-        headers: {
-          'content-type':
-            upstream.headers.get('content-type') ?? 'application/json; charset=utf-8',
-        },
-      });
-    } catch (error) {
-      return Response.json(
-        { error: failureCode, detail: String(error) },
-        { status: 502 },
-      );
-    }
-  }
-
-  // Cernere の組み込み CompositeLogin が使う pre-auth API。
-  // ブラウザへ資格情報レスポンスの送信先を一つに保ち、CORS 依存を避ける。
-  app.post('/auth/composite/:action', async (c) => {
-    if (AUTH_UI_MODE === 'passkey') {
-      return c.json({ error: 'auth_method_disabled' }, 404);
-    }
-    const action = c.req.param('action');
-    if (!['login', 'register', 'mfa-verify'].includes(action)) {
-      return c.json({ error: 'unknown_composite_action' }, 404);
-    }
-    if (!projectAuth) return c.json({ error: 'auth_unavailable' }, 503);
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid_json' }, 400);
-    }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      return c.json({ error: 'invalid_auth_payload' }, 400);
-    }
-    try {
-      const result = await projectAuth.authenticate(
-        action as CompositeAuthAction,
-        body as Record<string, unknown>,
-      );
-      return c.json(result);
-    } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 401);
-    }
-  });
-
-  // WebSocket 本人確認で得た one-time authCode を user token に交換する。
-  app.post('/auth/exchange', async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid_json' }, 400);
-    }
-    try {
-      const upstream = await fetch(`${CERNERE_BASE_URL}/api/auth/exchange`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await upstream.json().catch(() => ({})) as Partial<AuthTokenPair> & {
-        error?: string;
-      };
-      if (
-        !upstream.ok
-        || typeof data.accessToken !== 'string'
-        || typeof data.refreshToken !== 'string'
-      ) {
-        return c.json({ error: data.error ?? 'token_exchange_failed' }, 401);
-      }
-      persistAuthCookies(c, {
-        accessToken: data.accessToken,
-        refreshToken: data.refreshToken,
-      });
-      return c.json({ ok: true });
-    } catch (error) {
-      return c.json({ error: 'exchange_proxy_failed', detail: String(error) }, 502);
-    }
-  });
-
-  app.post('/auth/logout', async (c) => {
-    const refreshToken = getRefreshToken(c);
-    if (refreshToken) {
-      try {
-        await fetch(`${CERNERE_BASE_URL}/api/auth/logout`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ refreshToken }),
-        });
-      } catch {
-        // Cookie は必ず破棄し、Cernere不達時もローカルのログアウトを完了する。
-      }
-    }
-    clearAuthCookies(c);
-    return c.json({ ok: true });
-  });
-
-  // pre-auth ログイン代行 — host が Cernere /api/auth/login へ中継し accessToken
-  // を返す (ブラウザ→Cernere の CORS 回避 + §11.4 host 代行)。
-  app.post('/auth/login', async (c) => {
-    return c.json({ error: 'use_project_authenticated_composite_login' }, 404);
-  });
+  if (serviceSessions) app.route('/', makeServiceSessionRoutes(serviceSessions, AUDIENCE));
 
   // ── §12.3 HMR: UI キー version を polling して shell に push ──────────
   // サービスの UI キー (descriptor/html) の version (file mtime) が上がったら、
@@ -471,8 +339,8 @@ export async function startCorpus(options: CorpusStartOptions = {}): Promise<Cor
       health: '/api/health',
       data: own.data,
       panels: own.panels,
-      auth: 'cernere-project-token',
-      cernereProjectKey: process.env.CORPUS_SERVICE_ID ?? 'corpus',
+      auth: 'cernere-delegated-operation',
+      cernereProjectKey: NO_AUTH ? undefined : requireEnv('CERNERE_PROJECT_KEY'),
     });
   });
 
@@ -605,7 +473,7 @@ export async function startCorpus(options: CorpusStartOptions = {}): Promise<Cor
   });
   app.notFound((c) => {
     const url = new URL(c.req.url);
-    if (url.pathname.startsWith('/api/')) return c.json({ error: 'not_found' }, 404);
+    if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/')) return c.json({ error: 'not_found' }, 404);
     return c.redirect('/');
   });
 
@@ -627,17 +495,6 @@ export async function startCorpus(options: CorpusStartOptions = {}): Promise<Cor
     console.log(`[corpus] connectors: ${registry.listConnectors().map((c) => c.id).join(', ') || '(none)'}`);
   });
   await ownHttpServer(server as Server, scope);
-  if (!NO_AUTH && AUTH_UI_MODE === 'composite') {
-    attachCompositeWebSocketProxy(
-      server as Server,
-      CERNERE_BASE_URL,
-    (diagnostic: CompositeWebSocketProxyDiagnostic) => {
-      writeDiagnostic('composite-ws.proxy', diagnostic);
-      console.log(`[composite-ws-proxy] ${JSON.stringify(diagnostic)}`);
-    },
-  );
-}
-
   scope.defer(startHealthLoop(registry, db));
   // discovery loop は上で controller 経由で start 済 — ここでは何もしない。
   return { close: () => scope.close() };

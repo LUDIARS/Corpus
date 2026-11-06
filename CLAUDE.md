@@ -16,16 +16,16 @@
 ## アーキ要点
 
 - Hono + better-sqlite3 + esbuild + tsx (Bibliotheca / Memoria pattern)
-- Cernere 認証は `server/auth.ts` — user accessToken を `/api/auth/me` で
-  検証 (5min キャッシュ)。 hub は参照先トークン発行 (D5) のため user accessToken
-  を保持する必要があり、 leaf サービスの project-token local 検証方式は採らない
+- Cernere 認証は `server/auth.ts` — Corpus 自身の opaque session を scoped Cr grant
+  に bind し、毎回 shared Composite SDK で現在状態を確認する。global user token / refresh /
+  5min cache は保持しない。host の operationPolicy による操作分類と最新データ認可が必須。
 - 起動口は `server/bootstrap.ts`: Infisical machine identity →
   `ensureEnv()` で secret fetch & inject → `index.ts`
 - hub 機構は `server/hub/`: コネクタ抽象 + レジストリ + プラグインローダ
 - v0.2 データハブ機構 (横断仕様 `../VantanHub-DESIGN.md` §7-9):
   - `hub/manifest.ts` — サービスマニフェスト `/.well-known/corpus-service.json` (D6)
   - `hub/discovery.ts` — local 既知ポート probe / server 設定参照 (D1)
-  - `hub/tokens.ts` — 参照先トークン伝播の抽象 (passthrough / cernere-project-token、D5)
+  - `hub/tokens.ts` — 操作ごとの一度限りの下流委譲 (cernere-service-delegation、D5)
   - `connectors/manifest-connector.ts` — マニフェスト駆動コネクタ
   - `/api/hub/services` (一覧) / `/api/hub/data/:service/:dataId` (集約取得)
 - frontend (`public/`) は shell のみ。 ドメイン UI はプラグインの `panel.js`

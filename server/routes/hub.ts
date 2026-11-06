@@ -6,7 +6,7 @@ import {
   listExternalIdMappings,
   reassignExternalId,
 } from '../db.ts';
-import { getUserToken, requireAdmin } from '../auth.ts';
+import { getUserSession, requireAdmin } from '../auth.ts';
 import { buildOverview } from '../hub/aggregate.ts';
 import type { HubRegistry } from '../hub/registry.ts';
 import { expandPanelRefs, isPanelDescriptor } from '../hub/shared-ui-expand.ts';
@@ -149,29 +149,13 @@ export function makeHubRouter(
     const endpoint = manifest.data.find((d) => d.id === dataId);
     if (!endpoint) return c.json({ error: 'data_not_found' }, 404);
 
-    let token: string | null = null;
-    if (manifest.auth === 'cernere-project-token') {
-      token = await tokenProvider.getDownstreamToken(getUserToken(c), {
-        service: conn.id,
-        projectKey: manifest.cernereProjectKey ?? conn.id,
-        baseUrl: conn.baseUrl,
-      });
-      if (!token) {
-        // TokenProvider は発行障害を null で返す。ここで匿名リクエストへ劣化させると、
-        // downstream の設定次第で認可を迂回し得るため、認証必須サービスは fail closed。
-        return c.json({ error: 'downstream_token_unavailable' }, 502);
-      }
-    } else if (manifest.auth !== 'none') {
-      return c.json({ error: 'unsupported_downstream_auth' }, 502);
-    }
     const method = c.req.method;
     const headers: Record<string, string> = {};
-    if (token) headers['authorization'] = `Bearer ${token}`;
-    const init: RequestInit = { method, headers };
+    let init: RequestInit = { method, headers, redirect: 'error' };
     if (method !== 'GET' && method !== 'HEAD') {
-      init.body = await c.req.text();
-      headers['content-type'] =
-        c.req.header('content-type') ?? 'application/json';
+      init.body = new Uint8Array(await c.req.arrayBuffer());
+      const contentType = c.req.header('content-type');
+      if (contentType) headers['content-type'] = contentType;
     }
 
     // endpoint.path の :param を _cp_<param> クエリで埋め、 _cp_* は転送から除く
@@ -186,12 +170,24 @@ export function makeHubRouter(
       }
     }
     const search = forwardParams.toString() ? `?${forwardParams.toString()}` : '';
+    const path = resolvedPath + search;
+    if (manifest.auth === 'cernere-delegated-operation') {
+      const policy = endpoint.delegation?.[method];
+      if (!manifest.cernereProjectKey || !policy?.action) return c.json({ error: 'downstream_operation_unclassified' }, 503);
+      const authorized = await tokenProvider.authorize(getUserSession(c), {
+        service: conn.id, projectKey: manifest.cernereProjectKey, baseUrl: conn.baseUrl,
+      }, { path, action: policy.action, additionalHeaders: policy.additionalHeaders, init });
+      if (!authorized) return c.json({ error: 'downstream_authorization_unavailable' }, 503);
+      init = authorized.init;
+    } else if (manifest.auth !== 'none') {
+      return c.json({ error: 'unsupported_downstream_auth' }, 503);
+    }
 
     let res: Response;
     try {
-      res = await conn.fetch(resolvedPath + search, init);
-    } catch (e) {
-      return c.json({ error: 'connector_error', detail: String(e) }, 502);
+      res = await conn.fetch(path, init);
+    } catch {
+      return c.json({ error: 'connector_error' }, 502);
     }
     const text = await res.text();
     return new Response(text, {

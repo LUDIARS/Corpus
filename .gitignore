@@ -1,4 +1,5 @@
 node_modules/
+/.claude/import-reviews/
 # 実行時に作られる repo 直下の SQLite 置き場だけを無視する。 アンカー無しの `data/`
 # はどの階層の data ディレクトリにも効き、 spec/domains/ (commit すべき ontology の
 # 置き場) まで巻き込んでいた。

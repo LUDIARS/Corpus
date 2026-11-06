@@ -1,5 +1,6 @@
 import type { Hono, MiddlewareHandler } from 'hono';
 import type { CorpusDb } from './db.ts';
+import type { ServiceOperationPolicy } from './service-operation-gate.ts';
 
 /** Host-owned authorization runs after authentication, before every protected API.
  * Policies may deny requests or narrow responses; they cannot bypass requireAuth.
@@ -13,6 +14,10 @@ export function installHostAccessPolicy(app: Hono, policy?: MiddlewareHandler): 
 }
 
 export interface CorpusStartOptions {
+  /** Required in authenticated mode. Unknown routes must return null (deny).
+   * Supplies explicit classification and current domain/resource authorization.
+   */
+  operationPolicy?: ServiceOperationPolicy;
   /** Domain authorization belongs to the host, never to Corpus. */
   accessPolicy?: MiddlewareHandler;
   /** Explicit anonymous reads mounted at /public, GET/HEAD only.

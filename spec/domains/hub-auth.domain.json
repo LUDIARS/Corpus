@@ -1,24 +1,31 @@
 {
   "name": "hub-auth",
-  "description": "Cernere を正本とする利用者認証。user accessToken の検証とキャッシュ、Cookie の発行と失効、composite ログインの WS 代行、リクエスト origin の解決、エッジ (Cloudflare Access) 配置時の設定不備ガード。信頼判断そのものは Cernere が持ち、ここは受け取りと保持を担う。",
+  "description": "Cernere に bind した opaque service session、失効確認、操作分類と一度限りの許可、host の最新データ認可、Cookie と origin 境界。global user token と認可キャッシュは保持しない。",
   "presetRules": [],
+  "specRefs": ["SPEC-HUB-BOUND-SERVICE-SESSION"],
   "templateRules": [],
   "membership": [
     {
-      "pathPattern": "(^|/)server/auth\\.ts$"
+      "pathPattern": "(^|/)server/(upload-capture|service-upload-gate)(\\.test)?\\.ts$"
     },
     {
-      "pathPattern": "(^|/)server/project-auth-client(\\.test)?\\.ts$"
+      "pathPattern": "(^|/)server/service-session-(store|cookie|routes)(\\.test)?\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)server/service-operation-(body|gate)(\\.test)?\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)server/service-identity-provider(\\.test)?\\.ts$"
+    },
+    {
+      "pathPattern": "(^|/)server/auth\\.ts$"
     },
     {
       "pathPattern": "(^|/)server/request-origin(\\.test)?\\.ts$"
     },
     {
-      "pathPattern": "(^|/)server/composite-ws-proxy(\\.test)?\\.ts$"
-    },
-    {
       "pathPattern": "(^|/)server/edge-guard(\\.test)?\\.ts$"
     }
   ],
-  "cardTemplate": "Summarise the \"hub-auth\" domain: Cernere を正本とする利用者認証。user accessToken の検証とキャッシュ、Cookie の発行と失効、composite ログインの WS 代行、リクエスト origin の解決、エッジ (Cloudflare Access) 配置時の設定不備ガード。信頼判断そのものは Cernere が持ち、ここは受け取りと保持を担う。"
+  "cardTemplate": "Summarise the hub-auth domain: bound service sessions, live revocation checks, one-operation permits and host-owned current data authorization."
 }

@@ -5,7 +5,7 @@ import { afterEach, describe, it, expect } from 'vitest';
 import type { AuthIdentity } from '../auth.ts';
 import { openDb } from '../db.ts';
 import { CapabilityNotFoundError, HubRegistry } from './registry.ts';
-import { PassthroughTokenProvider } from './tokens.ts';
+import { DisabledUserDelegation } from './tokens.ts';
 import type { ConnectorHealth, ServiceConnector } from './types.ts';
 
 const identity: AuthIdentity = {
@@ -54,7 +54,7 @@ describe('HubRegistry', () => {
 
   it('CORPUS_PLUGIN_DIR 未指定なら loadPluginPacks は no-op', async () => {
     const reg = new HubRegistry(openDb(':memory:'));
-    await reg.loadPluginPacks(undefined, new PassthroughTokenProvider());
+    await reg.loadPluginPacks(undefined, new DisabledUserDelegation());
     expect(reg.listModules()).toEqual([]);
   });
 });
@@ -91,7 +91,7 @@ describe('HubRegistry capabilities', () => {
 
   async function loadPack(moduleId: string, setupBody: string): Promise<HubRegistry> {
     const reg = new HubRegistry(openDb(':memory:'));
-    await reg.loadPluginPacks(await writePack(moduleId, setupBody), new PassthroughTokenProvider());
+    await reg.loadPluginPacks(await writePack(moduleId, setupBody), new DisabledUserDelegation());
     return reg;
   }
 

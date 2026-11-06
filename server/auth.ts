@@ -1,249 +1,98 @@
-// Cernere 認証 — Corpus は hub なので「user accessToken」 を保持する。
-//
-// 背景 (VantanHub-DESIGN.md §7 / D5):
-//   Corpus は参照先サービスを叩く際、 参照先ごとの project-token を Cernere
-//   `/api/auth/project-token` から発行する。 この発行 API は呼び出し元が
-//   「ログイン中ユーザの user accessToken」 を持っていることを要求する。
-//   よって Corpus は leaf サービス (project-token を public key で local 検証)
-//   方式ではなく、 **user accessToken を受け取り、 Cernere `/api/auth/me` で
-//   検証** する方式を採る。 検証結果は短時間キャッシュする。
-//   保持した user accessToken は requireAuth が ctx に積み、 tokens.ts
-//   (CernereProjectTokenProvider) が参照先トークン発行に使う。
-//
-// user accessToken は HS256 JWT で Cernere 秘密鍵でしか検証できないため、
-// local 検証はできず Cernere への問い合わせが必要 — これは hub の性質上の
-// 必然的なトレードオフ (leaf サービスの 6h 公開鍵 fetch より Cernere 密結合)。
-
+/** Corpus authenticates its own opaque sessions through the shared live Cr gate.
+ * Resource authorization remains owned by each host/endpoint.
+ * @implements SPEC-HUB-BOUND-SERVICE-SESSION
+ */
 import type { Context, MiddlewareHandler } from 'hono';
-import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { createHash } from 'node:crypto';
+import { CompositeAuthorityError, type BoundServiceSession } from '../lib/cernere/packages/composite/src/service-session.js';
 import { resolveExternalId, type CorpusDb } from './db.ts';
-import {
-  extractServiceTokenCandidate,
-  matchExternalServiceRoute,
-  type ExternalServiceAuth,
-} from './external-service-auth.ts';
+import { clearServiceSessionCookie, readServiceSessionCookie } from './service-session-cookie.ts';
+import { ServiceSessionMissingError, type ServiceSessionStore } from './service-session-store.ts';
+import { extractServiceTokenCandidate, matchExternalServiceRoute, type ExternalServiceAuth } from './external-service-auth.ts';
 import { isServiceTokenCandidate, type ServicePrincipal } from './service-token.ts';
-
-/** 検証結果キャッシュの TTL。 user accessToken の寿命 (60min) より十分短く取る。 */
-const CACHE_TTL_MS = 5 * 60 * 1000;
+import type { CompositeDelegations, DelegationDecision } from '../lib/cernere/packages/composite/src/delegation.js';
+import type { CompositeUploads } from '../lib/cernere/packages/composite/src/upload.js';
+import { runServiceOperation, type ServiceOperationGate, type ServiceOperationPolicy } from './service-operation-gate.ts';
 
 export interface AuthIdentity {
-  /** Cernere userId (sub)。 */
+  /** Cr's stable service subject, including its existing federation resolution. */
   userId: string;
-  /** Corpus が解決した owner 識別子 (external-id、 案B)。 共有データの owner に使う。 */
   externalId: string;
   role: string;
   displayName: string | null;
-  /** 旧 project-token 方式の名残。 現方式では常に null (互換のため残置)。 */
   projectKey: string | null;
   isAdmin: boolean;
 }
-
+export interface ServiceUserSession {
+  /** Backend-only local credential; never forward this credential downstream. */
+  token: string;
+  grant: BoundServiceSession;
+}
 interface AuthOptions {
-  cernereBaseUrl: string;
+  sessions: Pick<ServiceSessionStore, 'resolve' | 'run'>;
+  delegations: Pick<CompositeDelegations, 'run'>;
+  uploads?: Pick<CompositeUploads, 'run'>;
+  operationPolicy: ServiceOperationPolicy;
   adminIds: ReadonlySet<string>;
-  /** external-id 解決に使う SQLite ハンドル。 */
   db: CorpusDb;
-  /** この Corpus が接続する Cernere の issuer 識別子。 */
   issuer: string;
-  cookieSecure: boolean;
-  /**
-   * プラグイン外部経路 (/api/x/<moduleId>/external/*) で Cernere service token を
-   * 受理する設定。 null / 未指定なら無効 (現行挙動)。
-   */
+  publicOrigin: string;
   externalService?: ExternalServiceAuth | null;
 }
-
-export interface AuthTokenPair {
-  accessToken: string;
-  refreshToken: string;
-}
-
-interface CacheEntry {
-  identity: AuthIdentity;
-  expiresAt: number;
-}
-
 let optsRef: AuthOptions | null = null;
-const cache = new Map<string, CacheEntry>();
-const refreshInFlight = new Map<string, Promise<AuthTokenPair | null>>();
-const ACCESS_COOKIE = 'cernere_token';
-const REFRESH_COOKIE = 'cernere_refresh_token';
-const ACCESS_COOKIE_MAX_AGE_SECONDS = 55 * 60;
-const REFRESH_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
-
 export function startAuth(opts: AuthOptions): () => void {
-  optsRef = { ...opts, cernereBaseUrl: opts.cernereBaseUrl.replace(/\/+$/, '') };
-  // 期限切れキャッシュの定期 sweep
-  const timer = setInterval(() => {
-    const now = Date.now();
-    for (const [k, v] of cache) if (v.expiresAt <= now) cache.delete(k);
-  }, CACHE_TTL_MS);
-  timer.unref?.();
-  return () => {
-    clearInterval(timer);
-    optsRef = null;
-    cache.clear();
-    refreshInFlight.clear();
+  if (new URL(opts.publicOrigin).origin !== opts.publicOrigin) throw new Error('Canonical service public origin is required');
+  if (typeof opts.operationPolicy !== 'function') throw new Error('A host-owned service operation policy is required');
+  if (optsRef) throw new Error('Corpus authentication is already started');
+  const owner = { ...opts };
+  optsRef = owner;
+  return () => { if (optsRef === owner) optsRef = null; };
+}
+function extractBearerToken(c: Context): string | null {
+  const value = c.req.header('authorization');
+  return value?.toLowerCase().startsWith('bearer ') ? value.slice(7).trim() : null;
+}
+type UserAuthResult =
+  | { ok: true; session: ServiceUserSession; identity: AuthIdentity }
+  | { ok: false; status: 401 | 403 | 503; error: string };
+
+function identityFromGrant(owner: AuthOptions, grant: Pick<BoundServiceSession, 'user' | 'projectKey'>): AuthIdentity {
+  return {
+    userId: grant.user.id, externalId: resolveExternalId(owner.db, owner.issuer, grant.user.id),
+    role: grant.user.role, displayName: grant.user.displayName, projectKey: grant.projectKey,
+    isAdmin: owner.adminIds.has(grant.user.id),
   };
 }
-
-/** 生トークンをキャッシュキーにしないための短い指紋。 */
-function fingerprint(token: string): string {
-  return createHash('sha256').update(token).digest('hex').slice(0, 24);
+function operationGate(owner: AuthOptions): ServiceOperationGate {
+  return { policy: owner.operationPolicy, sessions: owner.sessions, delegations: owner.delegations, uploads: owner.uploads,
+    identity: (decision: DelegationDecision) => identityFromGrant(owner, decision), isCurrent: () => optsRef === owner };
 }
 
-/**
- * user accessToken を Cernere `GET /api/auth/me` で検証して identity を得る。
- * 失敗 (不正トークン / Cernere 不達) は null。 結果は CACHE_TTL_MS キャッシュ。
- */
-async function verifyToken(token: string): Promise<AuthIdentity | null> {
-  if (!optsRef) return null;
+async function resolveUserAuth(c: Context, bearer: string | null): Promise<UserAuthResult> {
   const owner = optsRef;
-  const key = fingerprint(token);
-  const cached = cache.get(key);
-  if (cached && cached.expiresAt > Date.now()) return cached.identity;
+  if (!owner) return { ok: false, status: 503, error: 'authentication_unavailable' };
+  const secure = new URL(owner.publicOrigin).protocol === 'https:';
+  const token = bearer ?? readServiceSessionCookie(c, secure);
+  if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return { ok: false, status: 401, error: 'service_session_required' };
+  // Cookies are ambient authority; state-changing cookie requests require an exact
+  // configured origin. Native clients use their explicit opaque bearer instead.
+  if (!bearer && !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method) && c.req.header('origin') !== owner.publicOrigin) {
+    return { ok: false, status: 403, error: 'invalid_session_origin' };
+  }
   try {
-    const res = await fetch(`${owner.cernereBaseUrl}/api/auth/me`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return null;
-    const u = (await res.json()) as {
-      id?: string;
-      name?: string;
-      role?: string;
-    };
-    // shutdown / 再設定後は、 旧 optsRef の db / issuer を触らずに捨てる。
-    if (!u.id || optsRef !== owner) return null;
-    const identity: AuthIdentity = {
-      userId: u.id,
-      externalId: resolveExternalId(owner.db, owner.issuer, u.id),
-      role: typeof u.role === 'string' ? u.role : 'general',
-      displayName: typeof u.name === 'string' ? u.name : null,
-      projectKey: null,
-      isAdmin: owner.adminIds.has(u.id),
-    };
-    cache.set(key, { identity, expiresAt: Date.now() + CACHE_TTL_MS });
-    return identity;
-  } catch (e) {
-    console.warn(`[auth] verify failed: ${(e as Error).message}`);
-    return null;
+    const grant = await owner.sessions.resolve(token);
+    if (optsRef !== owner) return { ok: false, status: 503, error: 'authentication_unavailable' };
+    return { ok: true, session: { token, grant }, identity: identityFromGrant(owner, grant) };
+  } catch (error) {
+    const denied = error instanceof ServiceSessionMissingError || (error instanceof CompositeAuthorityError && [401, 403].includes(error.status));
+    if (denied && !bearer) clearServiceSessionCookie(c, secure);
+    return { ok: false, status: denied ? 401 : 503, error: denied ? 'service_session_expired' : 'authority_unavailable' };
   }
 }
 
-function extractBearerToken(c: Context): string | null {
-  const h = c.req.header('authorization');
-  if (h && h.toLowerCase().startsWith('bearer ')) return h.slice(7).trim();
-  return null;
-}
-
-async function refreshAccessToken(refreshToken: string): Promise<AuthTokenPair | null> {
-  if (!optsRef) return null;
-  const key = fingerprint(refreshToken);
-  const existing = refreshInFlight.get(key);
-  if (existing) return existing;
-  const request = (async (): Promise<AuthTokenPair | null> => {
-    try {
-      const response = await fetch(`${optsRef?.cernereBaseUrl}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
-      });
-      if (!response.ok) return null;
-      const body = await response.json() as Partial<AuthTokenPair>;
-      if (typeof body.accessToken !== 'string' || typeof body.refreshToken !== 'string') {
-        return null;
-      }
-      return { accessToken: body.accessToken, refreshToken: body.refreshToken };
-    } catch {
-      return null;
-    }
-  })().finally(() => refreshInFlight.delete(key));
-  refreshInFlight.set(key, request);
-  return request;
-}
-
-export function persistAuthCookies(c: Context, tokens: AuthTokenPair): void {
-  const secure = optsRef?.cookieSecure ?? false;
-  setCookie(c, ACCESS_COOKIE, tokens.accessToken, {
-    httpOnly: true,
-    sameSite: 'Lax',
-    secure,
-    path: '/',
-    maxAge: ACCESS_COOKIE_MAX_AGE_SECONDS,
-  });
-  setCookie(c, REFRESH_COOKIE, tokens.refreshToken, {
-    httpOnly: true,
-    sameSite: 'Lax',
-    secure,
-    path: '/',
-    maxAge: REFRESH_COOKIE_MAX_AGE_SECONDS,
-  });
-}
-
-export function clearAuthCookies(c: Context): void {
-  const options = { path: '/', secure: optsRef?.cookieSecure ?? false };
-  deleteCookie(c, ACCESS_COOKIE, options);
-  deleteCookie(c, REFRESH_COOKIE, options);
-}
-
-export function getRefreshToken(c: Context): string | null {
-  return getCookie(c, REFRESH_COOKIE) ?? null;
-}
-
-/** --no-cernere / CORPUS_NO_AUTH=1 のとき requireAuth が返す固定 identity。
- *  ローカルデバッグ専用 — 本番運用では絶対に CORPUS_NO_AUTH を立てない。 */
-const NO_AUTH_IDENTITY: AuthIdentity = {
-  userId: 'dev-user',
-  externalId: 'dev-user',
-  role: 'admin',
-  displayName: 'Dev User (CORPUS_NO_AUTH)',
-  projectKey: null,
-  isAdmin: true,
-};
-
-type UserAuthResult =
-  | { ok: true; token: string; identity: AuthIdentity }
-  | { ok: false; error: 'unauthorized' | 'invalid_token' };
-
-/**
- * ユーザ token (Bearer → cookie → refresh cookie) を検証する。 bearerToken は
- * ユーザ token として扱う Bearer 値 (無ければ null)。
- */
-async function resolveUserAuth(c: Context, bearerToken: string | null): Promise<UserAuthResult> {
-  let token = bearerToken ?? getCookie(c, ACCESS_COOKIE) ?? null;
-  let identity = token ? await verifyToken(token) : null;
-  if (!identity && !bearerToken) {
-    const refreshToken = getRefreshToken(c);
-    const refreshed = refreshToken ? await refreshAccessToken(refreshToken) : null;
-    if (refreshed) {
-      persistAuthCookies(c, refreshed);
-      token = refreshed.accessToken;
-      identity = await verifyToken(token);
-    } else if (refreshToken) {
-      clearAuthCookies(c);
-    }
-  }
-  if (!token) return { ok: false, error: 'unauthorized' };
-  if (!identity) return { ok: false, error: 'invalid_token' };
-  return { ok: true, token, identity };
-}
-
-/**
- * 外部経路 (有効化済みモジュールの /api/x/<moduleId>/external/*) の認証。
- * 有効なユーザ token があれば従来どおりユーザとして通し、 無ければ Cernere service
- * token (署名・kind・exp・aud) を検証して service 主体を積む。 scope はプラグイン側が見る。
- * user accessToken は PASETO ではないので、 `v4.public.` の Bearer はユーザ検証に回さない。
- */
-async function authenticateExternalRoute(
-  c: Context,
-  external: ExternalServiceAuth,
-): Promise<UserAuthResult | { ok: true; principal: ServicePrincipal } | { ok: false; status: 401 | 503; error: string }> {
+async function authenticateExternalRoute(c: Context, external: ExternalServiceAuth): Promise<UserAuthResult | { ok: true; principal: ServicePrincipal }> {
   const bearer = extractBearerToken(c);
-  const userBearer = bearer && !isServiceTokenCandidate(bearer) ? bearer : null;
-  const user = await resolveUserAuth(c, userBearer);
-  if (user.ok) return user;
+  const user = await resolveUserAuth(c, bearer && !isServiceTokenCandidate(bearer) ? bearer : null);
+  if (user.ok || user.status === 403) return user;
   const serviceToken = extractServiceTokenCandidate(c, external.headerNames);
   if (!serviceToken) return user;
   const verification = await external.verifier.verify(serviceToken);
@@ -254,75 +103,63 @@ async function authenticateExternalRoute(
   }
 }
 
+const NO_AUTH_IDENTITY: AuthIdentity = { userId: 'dev-user', externalId: 'dev-user', role: 'admin', displayName: 'Dev User (CORPUS_NO_AUTH)', projectKey: null, isAdmin: true };
 export const requireAuth: MiddlewareHandler = async (c, next) => {
+  c.header('Cache-Control', 'private, no-store');
   if (process.env.CORPUS_NO_AUTH === '1') {
-    // 認証 bypass — UI / hub の動作確認用。 downstream service への参照先
-    // トークン発行は機能しない (userToken が空) ので、 services への
-    // 実データ取得は別途 noauth 設定された service でないと 401 になる。
     c.set('auth', NO_AUTH_IDENTITY);
-    c.set('userToken', '');
     await next();
     return;
   }
-  const external = optsRef?.externalService ?? null;
-  const result = external && matchExternalServiceRoute(c.req.path, external.modules)
-    ? await authenticateExternalRoute(c, external)
-    : await resolveUserAuth(c, extractBearerToken(c));
-  if (!result.ok) {
-    return c.json({ error: result.error }, 'status' in result ? result.status : 401);
-  }
-  if ('principal' in result) {
-    // service 主体: auth / userToken は積まない (getIdentity は例外、 getUserToken は null)。
-    c.set('servicePrincipal', result.principal);
-  } else {
-    c.set('auth', result.identity);
-    // D5: 参照先トークン発行 (tokens.ts) で使う user accessToken を ctx に積む。
-    c.set('userToken', result.token);
-  }
-  await next();
-};
-
-export const requireAdmin: MiddlewareHandler = async (c, next) => {
-  const id = c.get('auth') as AuthIdentity | undefined;
-  if (!id) return c.json({ error: 'unauthorized' }, 401);
-  if (!id.isAdmin) return c.json({ error: 'admin_required' }, 403);
-  await next();
-};
-
-export function getIdentity(c: Context): AuthIdentity {
-  const id = c.get('auth') as AuthIdentity | undefined;
-  if (!id) {
-    if (c.get('servicePrincipal')) {
-      throw new Error('auth identity missing — request is authenticated as a service principal');
+  const owner = optsRef;
+  if (!owner) return c.json({ error: 'authentication_unavailable' }, 503);
+  const authorization = c.req.header('authorization');
+  if (authorization?.toLowerCase().startsWith('cernere-upload ')) {
+    const upload = authorization.slice('cernere-upload '.length), requestId = c.req.header('x-cernere-request-id') ?? '';
+    if (!/^[A-Za-z0-9_-]{43}$/.test(upload) || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
+      return c.json({ error: 'invalid_upload_credential' }, 401);
     }
-    throw new Error('auth identity missing — requireAuth not mounted');
+    return runServiceOperation(c, next, operationGate(owner), { upload, requestId });
   }
-  return id;
+  if (authorization?.toLowerCase().startsWith('cernere-delegation ')) {
+    const delegation = authorization.slice('cernere-delegation '.length);
+    const requestId = c.req.header('x-cernere-request-id') ?? '';
+    if (!/^[A-Za-z0-9_-]{43}$/.test(delegation) || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
+      return c.json({ error: 'invalid_delegation_credential' }, 401);
+    }
+    // Explicit capabilities never fall back to a browser cookie, user session or
+    // machine token, and never create a session usable for further delegation.
+    return runServiceOperation(c, next, operationGate(owner), { delegation, requestId });
+  }
+  if (authorization && !/^Bearer [^\s]+$/i.test(authorization)) return c.json({ error: 'invalid_authorization_scheme' }, 401);
+  const external = owner.externalService;
+  const result = external && matchExternalServiceRoute(c.req.path, external.modules)
+    ? await authenticateExternalRoute(c, external) : await resolveUserAuth(c, extractBearerToken(c));
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  if ('principal' in result) {
+    // Existing explicitly allowed machine routes retain their separate scope
+    // authorization; a machine principal is never a user/delegation session.
+    c.set('servicePrincipal', result.principal);
+    await next();
+    return;
+  }
+  c.set('auth', result.identity);
+  c.set('serviceUserSession', result.session);
+  return runServiceOperation(c, next, operationGate(owner), result);
+};
+export const requireAdmin: MiddlewareHandler = async (c, next) => {
+  const identity = c.get('auth') as AuthIdentity | undefined;
+  if (!identity) return c.json({ error: 'unauthorized' }, 401);
+  if (!identity.isAdmin) return c.json({ error: 'admin_required' }, 403);
+  await next();
+};
+export function getIdentity(c: Context): AuthIdentity {
+  const identity = c.get('auth') as AuthIdentity | undefined;
+  if (!identity) throw new Error(c.get('servicePrincipal') ? 'Request is authenticated as a service principal' : 'Corpus user authentication is missing');
+  return identity;
 }
-
-/**
- * 外部経路で requireAuth が通した service 主体 (ユーザ認証のリクエストでは null)。
- * プラグインは scope をここから読んで endpoint ごとの認可を行う。
- */
-export function getServicePrincipal(c: Context): ServicePrincipal | null {
-  return (c.get('servicePrincipal') as ServicePrincipal | undefined) ?? null;
-}
-
-/** requireAuth が積んだ user accessToken を取り出す (参照先トークン発行用)。 */
-export function getUserToken(c: Context): string | null {
-  return (c.get('userToken') as string | undefined) ?? null;
-}
-
+export function getServicePrincipal(c: Context): ServicePrincipal | null { return (c.get('servicePrincipal') as ServicePrincipal | undefined) ?? null; }
+export function getUserSession(c: Context): ServiceUserSession | null { return (c.get('serviceUserSession') as ServiceUserSession | undefined) ?? null; }
 declare module 'hono' {
-  interface ContextVariableMap {
-    auth: AuthIdentity;
-    userToken: string;
-    servicePrincipal: ServicePrincipal;
-  }
-}
-
-export async function _testOnlyVerify(
-  token: string,
-): Promise<AuthIdentity | null> {
-  return verifyToken(token);
+  interface ContextVariableMap { auth: AuthIdentity; serviceUserSession: ServiceUserSession; servicePrincipal: ServicePrincipal }
 }

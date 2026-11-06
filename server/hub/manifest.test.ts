@@ -19,8 +19,8 @@ describe('normalizeManifest', () => {
     expect(m?.health).toBe('/api/health');
     expect(m?.data).toEqual([]);
     expect(m?.panels).toEqual([]);
-    expect(m?.auth).toBe('none');
-    expect(m?.cernereProjectKey).toBe('bib');
+    expect(m?.auth).toBe('unconfigured');
+    expect(m?.cernereProjectKey).toBeUndefined();
   });
 
   it('壊れた data / panel エントリを除去する', () => {

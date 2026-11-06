@@ -16,20 +16,24 @@ export { HttpServiceConnector, SelfConnector } from '../connectors/builtin.ts';
 export type { HttpConnectorOptions } from '../connectors/builtin.ts';
 
 // 認証 — プラグインのルートは /api/x/<id> に mount され requireAuth 配下なので、
-// ハンドラ内で getIdentity(c) / getUserToken(c) を使ってよい。 getUserToken は
-// requireAuth が検証済みで積んだ user accessToken を返す (参照先トークン発行用)。
+// ハンドラ内で getIdentity(c) / getUserSession(c) を使える。ローカル opaque
+// session は backend 専用。下流へは TokenProvider が操作ごとの委譲を発行する。
 // ハブが CORPUS_EXTERNAL_SERVICE_AUTH_MODULES で有効化したモジュールの /external/*
 // では、 ユーザ token の無い Cernere service token 呼び出しも通る。 その場合
-// getIdentity は例外、 getUserToken は null で、 getServicePrincipal(c) が
+// getIdentity は例外、 getUserSession は null で、 getServicePrincipal(c) が
 // { kind: 'service', sub, scope } を返す (要求 scope の判定はプラグイン側で行う)。
-export { getIdentity, getUserToken, getServicePrincipal, requireAuth, requireAdmin } from '../auth.ts';
-export type { AuthIdentity } from '../auth.ts';
+export { getIdentity, getUserSession, getServicePrincipal, requireAuth, requireAdmin } from '../auth.ts';
+export type { AuthIdentity, ServiceUserSession } from '../auth.ts';
+export type { ClassifiedServiceOperation, ServiceOperationPolicy } from '../service-operation-gate.ts';
+export { getAuthorizedUploadBody } from '../service-upload-gate.ts';
+export type { AuthorizedUploadBody } from '../service-upload-gate.ts';
+export type { ServiceIdentityProvider } from '../service-identity-provider.ts';
 export type { ServicePrincipal } from '../service-token.ts';
 
 // 参照先トークン伝播 (D5) — plugin proxy が leaf を叩く前に、 受信ユーザトークンを
 // 参照先プロジェクト用トークンへ解決するために CorpusContext.tokenProvider を使う。
 // /api/hub/data と同じ TokenProvider インスタンス経由 (経路ごとに別実装にしない)。
-export type { TokenProvider, DownstreamTarget } from './tokens.ts';
+export type { TokenProvider, DownstreamTarget, DownstreamRequest, AuthorizedDownstreamRequest } from './tokens.ts';
 
 export type { CorpusDb } from '../db.ts';
 export { cacheDisplayName, getDisplayName } from '../db.ts';

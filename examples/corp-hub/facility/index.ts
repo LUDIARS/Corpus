@@ -4,7 +4,7 @@
 // 未稼働でも Hub は起動し、 パネルが 「未接続」 を表示する degraded モードで動く
 // (DESIGN.md §4)。
 
-import { Hono, HttpServiceConnector, getUserToken } from '../../../server/hub/sdk.ts';
+import { Hono, HttpServiceConnector, getUserSession } from '../../../server/hub/sdk.ts';
 import type { CorpusModule, CorpusContext, ServiceConnector } from '../../../server/hub/sdk.ts';
 
 /** 接続先 Aedilis の URL。 未設定なら degraded で動く。 */
@@ -23,7 +23,8 @@ const facility: CorpusModule = {
       // 「未設定なら degraded、 設定値が不正なら起動拒否」 が Corpus の作法。
       throw new Error(`${BASE_URL_ENV} must be an http(s) URL: ${rawBaseUrl}`);
     }
-    const projectKey = ctx.env(PROJECT_KEY_ENV)?.trim() ?? 'aedilis';
+    const projectKey = ctx.env(PROJECT_KEY_ENV)?.trim();
+    if (rawBaseUrl && !projectKey) throw new Error(`${PROJECT_KEY_ENV} is required for delegated facility access`);
 
     const connector: ServiceConnector = new HttpServiceConnector({
       id: 'aedilis',
@@ -39,18 +40,14 @@ const facility: CorpusModule = {
       if (!rawBaseUrl) {
         return c.json({ items: [], connected: false, detail: `${BASE_URL_ENV} 未設定` });
       }
-      // 受信ユーザトークンを参照先向けトークンへ解決してから叩く (D5)。
-      // 自前で Bearer を組み立てず、 必ず ctx.tokenProvider を通すこと。
-      const token = await ctx.tokenProvider.getDownstreamToken(getUserToken(c), {
+      const authorized = await ctx.tokenProvider.authorize(getUserSession(c), {
         service: 'aedilis',
-        projectKey,
+        projectKey: projectKey ?? '',
         baseUrl: rawBaseUrl,
-      });
-      if (!token) return c.json({ error: 'downstream_token_unavailable' }, 503);
+      }, { path: '/api/facilities', action: 'facility.list' });
+      if (!authorized) return c.json({ error: 'downstream_token_unavailable' }, 503);
 
-      const upstream = await connector.fetch('/api/facilities', {
-        headers: { authorization: `Bearer ${token}` },
-      }).catch(() => null);
+      const upstream = await connector.fetch(authorized.path, authorized.init).catch(() => null);
       if (!upstream || !upstream.ok) {
         ctx.logger.warn(`aedilis /api/facilities failed: ${upstream?.status ?? 'unreachable'}`);
         return c.json({ items: [], connected: false, detail: '接続先が応答しません' }, 502);

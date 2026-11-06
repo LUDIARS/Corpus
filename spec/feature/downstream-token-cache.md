@@ -1,5 +1,11 @@
 # Downstream token issuance lifetime
 
+Superseded for user authentication by `bound-service-session.md` and the one-operation
+Cernere delegation contract. The approved history is retained; reusable user-token issuance,
+the positive downstream cache and its single-flight sharing are removed. A one-use credential
+must never be shared across concurrent operations. Project-credential transport single-flight
+remains inside the shared Cr SDK; it cannot cache a user's authorization decision.
+
 Actio: a59a46f8-c919-4966-838f-81bcf075125c. Implements the existing GLAB
 `spec/plan/2026-09-08-corpus-token-cache-contract.md` contract within Corpus.
 

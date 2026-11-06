@@ -8,6 +8,8 @@ import type { HubRegistry } from '../hub/registry.ts';
 import type { TokenProvider } from '../hub/tokens.ts';
 import type { ServiceConnector } from '../hub/types.ts';
 import { makeHubRouter } from './hub.ts';
+import type { ServiceUserSession } from '../auth.ts';
+const userSession: ServiceUserSession = { token: 's'.repeat(43), grant: { projectToken: 'private-source', sessionBinding: 'b'.repeat(43), projectKey: 'glab', user: {id:'subject',role:'member',displayName:'User',email:null}, expiresAt:new Date(Date.now()+600000).toISOString() } };
 
 function makeConnector(
   auth: string,
@@ -19,7 +21,7 @@ function makeConnector(
     version: '1.0.0',
     corpusApi: 1,
     health: '/api/health',
-    data: [{ id: 'items', path: '/items', scope: 'multi' }],
+    data: [{ id: 'items', path: '/items', scope: 'multi', delegation: { GET: { action: 'items.read' } } }],
     panels: [],
     auth,
     cernereProjectKey: 'service-project',
@@ -45,7 +47,7 @@ function makeApp(
   } as unknown as HubRegistry;
   const app = new Hono();
   app.use('*', async (c, next) => {
-    c.set('userToken', 'user-token');
+    c.set('serviceUserSession', userSession);
     await next();
   });
   app.route(
@@ -63,16 +65,16 @@ function makeApp(
 function makeTokenProvider(token: string | null): TokenProvider {
   return {
     mode: 'test',
-    getDownstreamToken: vi.fn().mockResolvedValue(token),
+    authorize: vi.fn(async (_session, _target, request) => token ? { path: request.path, init: { ...request.init, headers: { authorization: 'Cernere-Delegation '+token } } } : null),
   };
 }
 
 describe('hub downstream authentication', () => {
-  it('project-token を発行できなければ匿名リクエストへ劣化しない', async () => {
+  it('操作委譲を発行できなければ匿名リクエストへ劣化しない', async () => {
     const fetchImpl = vi.fn<ServiceConnector['fetch']>();
     const tokenProvider = makeTokenProvider(null);
     const app = makeApp(
-      makeConnector('cernere-project-token', fetchImpl),
+      makeConnector('cernere-delegated-operation', fetchImpl),
       tokenProvider,
     );
 
@@ -80,9 +82,9 @@ describe('hub downstream authentication', () => {
       'http://localhost/api/hub/data/service/items',
     );
 
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(503);
     expect(await response.json()).toEqual({
-      error: 'downstream_token_unavailable',
+      error: 'downstream_authorization_unavailable',
     });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -99,18 +101,18 @@ describe('hub downstream authentication', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(tokenProvider.getDownstreamToken).not.toHaveBeenCalled();
+    expect(tokenProvider.authorize).not.toHaveBeenCalled();
     const init = fetchImpl.mock.calls[0]?.[1];
     expect(new Headers(init?.headers).has('authorization')).toBe(false);
   });
 
-  it('発行した project-token だけを認証必須サービスへ送る', async () => {
+  it('対象操作に束縛された一度限りの委譲だけを認証必須サービスへ送る', async () => {
     const fetchImpl = vi
       .fn<ServiceConnector['fetch']>()
       .mockResolvedValue(Response.json({ ok: true }));
-    const tokenProvider = makeTokenProvider('project-token');
+    const tokenProvider = makeTokenProvider('operation-capability');
     const app = makeApp(
-      makeConnector('cernere-project-token', fetchImpl),
+      makeConnector('cernere-delegated-operation', fetchImpl),
       tokenProvider,
     );
 
@@ -119,14 +121,14 @@ describe('hub downstream authentication', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(tokenProvider.getDownstreamToken).toHaveBeenCalledWith('user-token', {
+    expect(tokenProvider.authorize).toHaveBeenCalledWith(userSession, {
       service: 'service',
       projectKey: 'service-project',
       baseUrl: 'http://service.test',
-    });
+    }, { action: 'items.read', path: '/items', init: { method: 'GET', headers: {}, redirect: 'error' }, additionalHeaders: undefined });
     const init = fetchImpl.mock.calls[0]?.[1];
     expect(new Headers(init?.headers).get('authorization')).toBe(
-      'Bearer project-token',
+      'Cernere-Delegation operation-capability',
     );
   });
 
@@ -139,11 +141,11 @@ describe('hub downstream authentication', () => {
       'http://localhost/api/hub/data/service/items',
     );
 
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(503);
     expect(await response.json()).toEqual({
       error: 'unsupported_downstream_auth',
     });
-    expect(tokenProvider.getDownstreamToken).not.toHaveBeenCalled();
+    expect(tokenProvider.authorize).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

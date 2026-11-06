@@ -14,6 +14,8 @@ export interface ManifestDataEndpoint {
   /** ローカルサービス由来か、 マルチ集約由来か。 */
   scope: 'local' | 'multi';
   title?: string;
+  /** Destination-owned action per HTTP method, including sensitive GET. */
+  delegation?: Record<string, { action: string; additionalHeaders?: string[] }>;
 }
 
 /** script panel — サービスが panel.js を配信し mount() を実行する (D4 / 旧来)。 */
@@ -68,9 +70,9 @@ export interface CorpusServiceManifest {
   panels: ManifestPanel[];
   /** このサービスが所有し、 他サービスへ参照させる共通 UI 定義。 */
   sharedUi?: ManifestSharedUi[];
-  /** 認証方式 — 'cernere-project-token' | 'none'。 */
+  /** Explicit 'cernere-delegated-operation' or 'none'; missing is unconfigured. */
   auth: string;
-  /** Cernere の managed project key。 省略時は service を使う (D5 のトークン発行用)。 */
+  /** Explicit managed project key. Never infer it from a service name. */
   cernereProjectKey?: string;
 }
 
@@ -140,10 +142,10 @@ export function normalizeManifest(
             !!(u as Record<string, unknown>).endpoint,
         )
       : [],
-    auth: typeof raw.auth === 'string' ? raw.auth : 'none',
+    auth: typeof raw.auth === 'string' ? raw.auth : 'unconfigured',
     cernereProjectKey:
       typeof raw.cernereProjectKey === 'string'
         ? raw.cernereProjectKey
-        : raw.service,
+        : undefined,
   };
 }

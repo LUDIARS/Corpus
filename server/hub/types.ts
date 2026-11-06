@@ -7,8 +7,9 @@
 import type { Hono } from 'hono';
 import type { AuthIdentity } from '../auth.ts';
 import type { CorpusDb } from '../db.ts';
-import type { CorpusServiceManifest } from './manifest.ts';
+import type { CorpusServiceManifest, ManifestDataEndpoint } from './manifest.ts';
 import type { TokenProvider } from './tokens.ts';
+import type { ServiceIdentityProvider } from '../service-identity-provider.ts';
 
 /** 接続先サービスの種別。 frontend がローカル印 / マルチ印を出し分ける。 */
 export type ConnectorScope = 'local' | 'multi';
@@ -75,6 +76,8 @@ export interface ModuleDataDecl {
   path: string;
   title?: string;
   scope?: ConnectorScope;
+  /** Same server-owned per-method action as the destination's operation policy. */
+  delegation?: ManifestDataEndpoint['delegation'];
 }
 
 export interface CapabilitySchema {
@@ -142,6 +145,11 @@ export interface CorpusContext {
    * 同じ実装・同じキャッシュで尊重する)。
    */
   readonly tokenProvider: TokenProvider;
+  /** Own Cr identity operations require a local bound session and explicit Cr
+   * operation permission. Absent in explicit no-auth mode; never fall back to
+   * global user credentials or a machine/project client reading arbitrary users.
+   */
+  readonly identityProvider?: ServiceIdentityProvider;
 }
 
 /**

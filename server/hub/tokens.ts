@@ -1,206 +1,92 @@
-// D5 — 認証トークンの伝播 (VantanHub-DESIGN.md §7)。
-//
-// Corpus が参照先サービスを叩く際、 どのトークンを送るかを抽象化する。
-//  - passthrough          : 受信 Bearer をそのまま転送 (audience が揃う構成 /
-//                           無認証ローカル直結向け)。 v0.2 の既定。
-//  - cernere-project-token: 受信トークンを user accessToken とみなし、 Cernere
-//                           /api/auth/project-token で参照先プロジェクト用の
-//                           短命 PASETO を発行する (本番想定)。
-//
-// 発行済みトークンは process memory のみにキャッシュする
-// ([[feedback_secret_per_user_memory_only]])。 disk / Infisical には残さない。
+/** Downstream calls receive one prepared, operation-bound Cr capability.
+ * No global user token, passthrough or cached positive authorization.
+ * @implements SPEC-HUB-BOUND-SERVICE-SESSION
+ */
+import type { ServiceUserSession } from '../auth.ts';
+import type { ServiceSessionStore } from '../service-session-store.ts';
+import type { DelegatedHttpOperation } from '../../lib/cernere/packages/composite/src/delegation.js';
+import { requireUploadLimits } from '../../lib/cernere/packages/composite/src/upload-body.js';
+import type { AuthorizedUploadBody } from '../service-upload-gate.ts';
 
-import { createHash } from 'node:crypto';
-import { DownstreamTokenCache } from './token-cache.ts';
-
-export interface DownstreamTarget {
-  /** 参照先サービス id。 */
-  service: string;
-  /** Cernere managed project key (マニフェスト cernereProjectKey 由来)。 */
-  projectKey: string;
-  /**
-   * 参照先サービスの baseUrl。 Cernere に `hub_url` として渡して PASETO の aud
-   * claim を組み立てる (Issue #91 Phase 1)。 空文字なら旧 HS256 経路に fallback。
-   */
-  baseUrl: string;
-}
-
+export interface DownstreamTarget { service: string; projectKey: string; baseUrl: string }
+export interface DownstreamRequest { path: string; action: string; init?: RequestInit; additionalHeaders?: readonly string[]; upload?: AuthorizedUploadBody }
+export interface AuthorizedDownstreamRequest { path: string; init: RequestInit; dispose?: () => void }
+type DelegationSessions = Pick<ServiceSessionStore, 'delegate'> & Partial<Pick<ServiceSessionStore, 'delegateUpload'>>;
 export interface TokenProvider {
   readonly mode: string;
-  /** 参照先へ送るトークンを返す。 取れなければ null。 */
-  getDownstreamToken(
-    incomingToken: string | null,
-    target: DownstreamTarget,
-  ): Promise<string | null>;
+  authorize(session: ServiceUserSession | null, target: DownstreamTarget, request: DownstreamRequest): Promise<AuthorizedDownstreamRequest | null>;
 }
 
-/** 受信 Bearer をそのまま転送する。 */
-export class PassthroughTokenProvider implements TokenProvider {
-  readonly mode = 'passthrough';
-  async getDownstreamToken(
-    incomingToken: string | null,
-    _target: DownstreamTarget,
-  ): Promise<string | null> {
-    return incomingToken;
-  }
+/** Explicit no-user dev mode still refuses authenticated downstream requests. */
+export class DisabledUserDelegation implements TokenProvider {
+  readonly mode = 'none';
+  async authorize(): Promise<null> { return null; }
 }
+export class CernereDelegationTokenProvider implements TokenProvider {
+  readonly mode = 'cernere-service-delegation';
+  constructor(private readonly sessions: DelegationSessions) {}
 
-/**
- * 参照先トークンが取れなかった理由をログへ残す。
- *
- * TokenProvider の契約は「取れなければ null」。呼び出し側は参照先の認証契約に
- * 応じて扱い、routes/hub.ts は認証必須なら制御された 502 を返す。ここで throw すると
- * 未捕捉の 500 になるため、失敗はログとして残したうえで null を返す。
- */
-function warnDownstreamTokenUnavailable(service: string, status: number | null): void {
-  console.warn(
-    `[corpus/tokens] project-token unavailable for ${JSON.stringify(service)}` +
-      `${status == null ? ' (cernere unreachable)' : ` (${status})`}`,
-  );
-}
-
-/**
- * Cernere /api/auth/project-token で参照先ごとの短命 project token を発行する。
- * 受信トークンは「ログイン中ユーザの user accessToken」 である前提。
- */
-export class CernereProjectTokenProvider implements TokenProvider {
-  readonly mode = 'cernere-project-token';
-  private readonly cache: DownstreamTokenCache;
-  private readonly inFlight = new Map<string, Promise<string | null>>();
-
-  constructor(
-    private readonly cernereBaseUrl: string,
-    private readonly now: () => number = Date.now,
-  ) {
-    this.cache = new DownstreamTokenCache(now);
-  }
-
-  async getDownstreamToken(
-    incomingToken: string | null,
-    target: DownstreamTarget,
-  ): Promise<string | null> {
-    if (!incomingToken) return null;
-    // baseUrl 未確定 (未設定コネクタ) では project-token を発行しない。 Cernere は
-    // hub_url 必須 (HS256 fallback 撤去済み) なので発行要求は 400 になるだけ。 null を
-    // 返してトークン無しで進め、 接続先未設定コネクタ自身に 503 を返させる。
-    if (!target.baseUrl) return null;
-    // Connector は fetch 用 base URL を末尾 `/` 付きで保持することがある一方、
-    // 接続先の audience 設定は末尾 `/` なしが一般的。PASETO の aud は完全一致
-    // 検証なので、発行依頼・cache key の双方を同じ canonical URL に揃える。
-    const audienceUrl = target.baseUrl.replace(/\/+$/, '');
-    const key = `${tokenFingerprint(incomingToken)}:${target.projectKey}:${audienceUrl}`;
-    const cached = this.cache.get(key);
-    // 30s の余裕を見て期限内ならキャッシュ利用
-    if (cached) return cached;
-    const pending = this.inFlight.get(key);
-    if (pending) return pending;
-    const issuance = this.issueToken(incomingToken, target, audienceUrl, key)
-      .finally(() => this.inFlight.delete(key));
-    this.inFlight.set(key, issuance);
-    return issuance;
-  }
-
-  private async issueToken(
-    incomingToken: string,
-    target: DownstreamTarget,
-    audienceUrl: string,
-    key: string,
-  ): Promise<string | null> {
-    // hub_url (= 接続先 baseUrl) を PASETO の aud claim にするため必須で渡す
-    // (Cernere Issue #91 / aud 必須化)。 Cernere は PASETO v4 (Ed25519) を mint する。
-    const reqBody: Record<string, string> = {
-      project_key: target.projectKey,
-      hub_url: audienceUrl,
-    };
-    let res: Response;
+  async authorize(session: ServiceUserSession | null, target: DownstreamTarget, operation: DownstreamRequest): Promise<AuthorizedDownstreamRequest | null> {
+    if (!session || !target.projectKey || !target.baseUrl || !operation.action) return null;
     try {
-      res = await fetch(`${this.cernereBaseUrl}/api/auth/project-token`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${incomingToken}`,
-        },
-        body: JSON.stringify(reqBody),
-        signal: AbortSignal.timeout(10_000),
-      });
+      const base = new URL(target.baseUrl);
+      if (base.username || base.password || base.search || base.hash || !(base.protocol === 'https:'
+        || (base.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)))) throw new Error('Invalid downstream URL');
+      const prefix = base.pathname.replace(/\/+$/, '');
+      if (!operation.path.startsWith('/')) throw new Error('Absolute service-relative path required');
+      const path = prefix + operation.path;
+      const url = new URL(path, base.origin);
+      if (url.origin !== base.origin || url.pathname + url.search !== path || url.hash) throw new Error('Noncanonical downstream request');
+      const headers = new Headers(operation.init?.headers);
+      for (const secret of ['authorization', 'proxy-authorization', 'cookie']) headers.delete(secret);
+      // Explicit defaults avoid differences introduced by the HTTP implementation.
+      if (!headers.has('accept')) headers.set('accept', '*/*');
+      if (!headers.has('accept-language')) headers.set('accept-language', '*');
+      const upload = operation.upload;
+      if (upload && operation.init?.body !== upload.body) throw new Error('The exact authorized upload Blob is required');
+      // Upload capture is already serialized; do not create/read a second body
+      // stream or materialize 200 MiB through Request.arrayBuffer().
+      const prepared = new Request(url, { ...operation.init, ...(upload ? { body: undefined } : {}), headers, credentials: 'omit', redirect: 'error' });
+      if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(prepared.method)) throw new Error('Unclassified HTTP method');
+      // Platform Request serializes FormData once, including the boundary. Forward
+      // these exact bytes and headers, rather than independently serializing again.
+      const body = upload?.body ?? new Uint8Array(await prepared.arrayBuffer());
+      prepared.signal.throwIfAborted();
+      const request = { action: operation.action, method: prepared.method as DelegatedHttpOperation['method'],
+        path, resource: path, body, headers: prepared.headers, additionalHeaders: operation.additionalHeaders };
+      let credential: { token: string; requestId: string }, lifetime = 15_000, dispose: (() => void) | undefined;
+      if (upload) {
+        const limits = requireUploadLimits(upload);
+        if (!this.sessions.delegateUpload || ['GET', 'HEAD'].includes(prepared.method) || !(body instanceof Blob) || body.size > limits.maximumBytes) throw new Error('Bounded upload delegation is unavailable');
+        const issued = await this.sessions.delegateUpload(session.token, { projectKey: target.projectKey, audience: base.origin }, { ...request, body }, prepared.signal);
+        credential = { token: issued.arrivalToken, requestId: issued.requestId };
+        lifetime = limits.timeoutSeconds * 1000;
+        const transfer = new AbortController(); dispose = () => transfer.abort();
+        const forwarding = new Headers(prepared.headers);
+        forwarding.set('authorization', `Cernere-Upload ${credential.token}`); forwarding.set('x-cernere-request-id', credential.requestId);
+        prepared.signal.throwIfAborted();
+        return { path: operation.path, dispose, init: { ...operation.init, method: prepared.method, headers: forwarding, credentials: 'omit', redirect: 'error', body,
+          signal: AbortSignal.any([prepared.signal, transfer.signal, AbortSignal.timeout(lifetime)]) } };
+      }
+      const issued = await this.sessions.delegate(session.token, { projectKey: target.projectKey, audience: base.origin }, { ...request, body: body as Uint8Array });
+      credential = { token: issued.delegationToken, requestId: issued.requestId };
+      prepared.signal.throwIfAborted();
+      const forwarding = new Headers(prepared.headers);
+      forwarding.set('authorization', `Cernere-Delegation ${credential.token}`);
+      forwarding.set('x-cernere-request-id', credential.requestId);
+      return { path: operation.path, init: { ...operation.init, method: prepared.method, headers: forwarding,
+        credentials: 'omit', redirect: 'error', body: ['GET', 'HEAD'].includes(prepared.method) ? undefined : body,
+        signal: AbortSignal.any([prepared.signal, AbortSignal.timeout(15_000)]) } };
     } catch {
-      warnDownstreamTokenUnavailable(target.service, null);
+      // Errors may contain credentials or private URLs. The caller returns a
+      // controlled unavailable result; it must never perform an anonymous fetch.
       return null;
     }
-    if (!res.ok) {
-      warnDownstreamTokenUnavailable(target.service, res.status);
-      return null;
-    }
-    const body = (await res.json().catch(() => null)) as {
-      accessToken?: string;
-      expiresIn?: number;
-    } | null;
-    const expiresAt = this.now() + (body?.expiresIn ?? NaN) * 1000;
-    if (typeof body?.accessToken !== 'string' || !body.accessToken.trim() ||
-        typeof body.expiresIn !== 'number' || !Number.isFinite(body.expiresIn) ||
-        body.expiresIn <= 0 || !Number.isFinite(expiresAt)) {
-      warnDownstreamTokenUnavailable(target.service, 502);
-      return null;
-    }
-    this.cache.set(key, body.accessToken, expiresAt);
-    return body.accessToken;
   }
 }
-
-/** 受信トークンを生のままキャッシュキーにしないための短い指紋。 */
-function tokenFingerprint(token: string): string {
-  return createHash('sha256').update(token).digest('hex').slice(0, 16);
-}
-
-export type TokenMode = 'passthrough' | 'cernere-project-token';
-
-/** makeTokenProvider のオプション。 */
-export interface MakeTokenProviderOptions {
-  /**
-   * CORPUS_TOKEN_MODE 未設定時に passthrough を暗黙既定として許すか。
-   * **ローカル無認証 dev 経路 (CORPUS_NO_AUTH=1) のときだけ** true にする。
-   * 本番/通常起動では false のまま = 未設定なら fail-closed (起動拒否)。
-   */
-  allowImplicitPassthrough?: boolean;
-}
-
-/**
- * env CORPUS_TOKEN_MODE から TokenProvider を組み立てる。
- *
- * [[feedback_no_silent_fallback]] (RULE_CODE §7.1): 設定不備を最も弱い経路
- * (passthrough = ユーザ Bearer 素通し) に**無言フォールバックしない**。
- *  - 'passthrough' / 'cernere-project-token' を明示したときのみその provider。
- *  - 未設定: fail-closed で throw。 ただし dev 無認証経路
- *    (allowImplicitPassthrough=true) のみ passthrough を許す。
- *  - 未知の値: dev でも常に throw (明示的な誤設定)。
- *
- * throw した Error は呼び出し側 (index.ts) が捕捉して exit(1) する。
- */
-export function makeTokenProvider(
-  mode: string | undefined,
-  cernereBaseUrl: string,
-  opts: MakeTokenProviderOptions = {},
-): TokenProvider {
-  const normalized = mode?.trim();
-  if (normalized === 'cernere-project-token') {
-    return new CernereProjectTokenProvider(cernereBaseUrl.replace(/\/+$/, ''));
-  }
-  if (normalized === 'passthrough') {
-    return new PassthroughTokenProvider();
-  }
-  if (!normalized) {
-    if (opts.allowImplicitPassthrough) {
-      return new PassthroughTokenProvider();
-    }
-    throw new Error(
-      'CORPUS_TOKEN_MODE が未設定です。 passthrough か cernere-project-token を' +
-        '明示設定してください (本番想定は cernere-project-token)。 ' +
-        'ローカル無認証 dev では --no-cernere / CORPUS_NO_AUTH=1 を立てると ' +
-        'passthrough が既定になります。',
-    );
-  }
-  throw new Error(
-    `CORPUS_TOKEN_MODE='${normalized}' は不正です。 ` +
-      'passthrough か cernere-project-token を指定してください。',
-  );
+export function makeTokenProvider(mode: string | undefined, sessions: DelegationSessions | null, options: { noAuth?: boolean } = {}): TokenProvider {
+  const selected = mode?.trim();
+  if (options.noAuth && (!selected || selected === 'none')) return new DisabledUserDelegation();
+  if (selected === 'cernere-service-delegation' && sessions) return new CernereDelegationTokenProvider(sessions);
+  throw new Error('CORPUS_TOKEN_MODE=cernere-service-delegation and bound source sessions are required; none is allowed only with explicit no-auth dev mode');
 }

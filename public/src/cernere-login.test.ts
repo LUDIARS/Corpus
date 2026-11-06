@@ -1,180 +1,48 @@
-import { describe, expect, it, vi } from 'vitest';
-
-import {
-  buildPasskeyRedirectUrl,
-  CernereCompositeAuthClient,
-  type CernereCompositeClientDeps,
-} from './cernere-login.tsx';
-
-describe('passkey redirect login', () => {
-  it('uses the current window as the validated Composite callback', () => {
-    const result = new URL(buildPasskeyRedirectUrl(
-      'https://cernere.example',
-      'https://EducationLab.example/?view=surveys',
-      'state-123',
-    ));
-    expect(result.origin).toBe('https://cernere.example');
-    expect(result.pathname).toBe('/composite/login');
-    expect(result.searchParams.get('auth_mode')).toBe('passkey');
-    const callback = new URL(result.searchParams.get('redirect_uri') ?? '');
-    expect(callback.origin).toBe('https://educationlab.example');
-    expect(callback.searchParams.get('view')).toBe('surveys');
-    expect(callback.searchParams.get('cernere_composite_state')).toBe('state-123');
-  });
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { completeServiceLogin } from './cernere-login.tsx';
+const code = 'c'.repeat(43);
+const verifier = 'v'.repeat(43);
+const request = vi.fn();
+const removeItem = vi.fn();
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubGlobal('fetch', request);
+  vi.stubGlobal('localStorage', { removeItem });
+  request.mockResolvedValue(Response.json({ ok: true, expiresAt: new Date(Date.now() + 890_000).toISOString() }));
 });
-
-class FakeSocket {
-  readonly sent: string[] = [];
-  readyState = 1;
-  onmessage: ((event: MessageEvent) => void) | null = null;
-  onerror: (() => void) | null = null;
-  onclose: ((event: CloseEvent) => void) | null = null;
-
-  constructor(
-    readonly url: string,
-    readonly protocols: string[],
-  ) {}
-
-  send(data: string): void {
-    this.sent.push(data);
-  }
-
-  close(_code?: number, reason = ''): void {
-    this.readyState = 3;
-    this.onclose?.({ reason } as CloseEvent);
-  }
-
-  emit(message: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(message) } as MessageEvent);
-  }
-}
-
-const device = {
-  machine: {
-    os: 'Windows 11',
-    platform: 'Win32',
-    screen: '1920x1080',
-    timezone: 'Asia/Tokyo',
-    language: 'ja',
-  },
-  browser: {
-    ua: 'test',
-    vendor: 'test',
-    browser: 'Test',
-    version: '1',
-  },
-};
-
-describe('CernereCompositeAuthClient', () => {
-  it('invokes fetch with the browser global as its receiver', async () => {
-    const openWebSocket = vi.fn();
-    const fetchMock = vi.fn(function (this: unknown) {
-      if (this !== globalThis) {
-        throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
-      }
-      return Promise.resolve(
-        Response.json({ error: 'Invalid email or password' }, { status: 401 }),
-      );
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    try {
-      const client = new CernereCompositeAuthClient({
-        openWebSocket,
-        webSocketBaseUrl: 'http://127.0.0.1:5187',
-      });
-
-      await expect(
-        client.login({
-          email: 'user@example.com',
-          password: 'wrong-password',
-          device,
-        }),
-      ).rejects.toThrow('Invalid email or password');
-      expect(fetchMock).toHaveBeenCalledOnce();
-      expect(openWebSocket).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllGlobals();
-    }
+afterEach(() => vi.unstubAllGlobals());
+describe('browser project PKCE exchange', () => {
+  it('sends code and verifier only to the same-origin service and clears old storage', async () => {
+    await completeServiceLogin(code, verifier);
+    expect(request).toHaveBeenCalledTimes(1);
+    const [path, init] = request.mock.calls[0]!;
+    expect(path).toBe('/auth/exchange');
+    expect(init.credentials).toBe('same-origin');
+    expect(init.redirect).toBe('error');
+    expect(JSON.parse(init.body)).toEqual({ code, code_verifier: verifier });
+    expect(removeItem).toHaveBeenCalledWith('corpus_token');
   });
-
-  it('adapts the ticket WebSocket challenge to CompositeLogin authApi', async () => {
-    const fetchMock = vi.fn(async () =>
-      Response.json({
-        deviceVerificationRequired: true,
-        ticket: 'ticket-123',
-        wsPath: '/auth/composite-ws?ticket=ticket-123',
-      }),
-    );
-    let socket: FakeSocket | undefined;
-    const deps: CernereCompositeClientDeps = {
-      fetch: fetchMock as typeof fetch,
-      webSocketBaseUrl: 'http://127.0.0.1:5187',
-      openWebSocket: (url, protocols) => {
-        socket = new FakeSocket(url, protocols);
-        return socket as unknown as WebSocket;
-      },
-    };
-    const client = new CernereCompositeAuthClient(deps);
-
-    const login = client.login({
-      email: 'user@example.com',
-      password: 'password',
-      device,
-    });
-    await vi.waitFor(() => expect(socket).toBeDefined());
-
-    expect(socket?.url).toBe('ws://127.0.0.1:5187/auth/composite-ws');
-    expect(socket?.protocols).toEqual(['ticket', 'ticket-123']);
-    socket?.emit({ type: 'state', state: 'pending_device' });
-    expect(JSON.parse(socket?.sent[0] ?? '{}')).toEqual({
-      type: 'device',
-      payload: device,
-    });
-
-    socket?.emit({
-      type: 'state',
-      state: 'challenge_pending',
-      data: {
-        deviceToken: 'device-123',
-        emailMasked: 'u***@example.com',
-        anomalies: ['new_device'],
-      },
-    });
-    await expect(login).resolves.toMatchObject({
-      deviceVerificationRequired: true,
-      deviceToken: 'device-123',
-    });
-
-    const verify = client.deviceVerify({
-      deviceToken: 'device-123',
-      code: '123456',
-    });
-    expect(JSON.parse(socket?.sent[1] ?? '{}')).toEqual({
-      type: 'verify_code',
-      code: '123456',
-    });
-    socket?.emit({ type: 'authenticated', authCode: 'auth-code-123' });
-    await expect(verify).resolves.toEqual({ authCode: 'auth-code-123' });
+  it.each([{ accessToken: 'global' }, { refreshToken: 'refresh' }, { projectToken: 'scoped' }, { sessionToken: 'opaque' }])('rejects credentials in a browser response', async credentials => {
+    request.mockResolvedValueOnce(Response.json({ ok: true, expiresAt: new Date(Date.now() + 890_000).toISOString(), ...credentials }));
+    await expect(completeServiceLogin(code, verifier)).rejects.toThrow();
+    expect(removeItem).not.toHaveBeenCalled();
   });
-
-  it('surfaces upstream errors without opening a WebSocket', async () => {
-    const openWebSocket = vi.fn();
-    const client = new CernereCompositeAuthClient({
-      fetch: vi.fn(async () =>
-        Response.json({ error: 'Invalid email or password' }, { status: 401 }),
-      ) as typeof fetch,
-      openWebSocket,
-      webSocketBaseUrl: 'http://127.0.0.1:5187',
-    });
-
-    await expect(
-      client.login({
-        email: 'user@example.com',
-        password: 'wrong-password',
-        device,
-      }),
-    ).rejects.toThrow('Invalid email or password');
-    expect(openWebSocket).not.toHaveBeenCalled();
+  it('does not retry an exchange with an unknown outcome', async () => {
+    request.mockRejectedValueOnce(new Error('timeout'));
+    await expect(completeServiceLogin(code, verifier)).rejects.toThrow('timeout');
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+  it('rejects old code-only input and expired session metadata', async () => {
+    await expect(completeServiceLogin(code, '')).rejects.toThrow();
+    expect(request).not.toHaveBeenCalled();
+    request.mockResolvedValueOnce(Response.json({ ok: true, expiresAt: new Date(Date.now() - 1).toISOString() }));
+    await expect(completeServiceLogin(code, verifier)).rejects.toThrow();
+  });
+  it('uses the UI lifetime signal for an exchange in flight', async () => {
+    const lifetime = new AbortController();
+    await completeServiceLogin(code, verifier, lifetime.signal);
+    const signal = request.mock.calls[0]![1].signal as AbortSignal;
+    lifetime.abort();
+    expect(signal.aborted).toBe(true);
   });
 });

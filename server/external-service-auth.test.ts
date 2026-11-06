@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
+import { ServiceSessionMissingError } from './service-session-store.ts';
 import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
 import { openDb, type CorpusDb } from './db.ts';
 import {
   getIdentity,
   getServicePrincipal,
-  getUserToken,
+  getUserSession,
   requireAdmin,
   requireAuth,
   startAuth,
@@ -18,7 +19,7 @@ import { CernereServiceTokenVerifier, decideServicePrincipal } from './service-t
 
 const CERNERE = 'http://cernere.test';
 const AUDIENCE = 'educationlab';
-const USER_TOKEN = 'user-access-token';
+const USER_SESSION = 'u'.repeat(43);
 const KID = 'k1';
 
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -55,20 +56,15 @@ function serviceClaims(overrides: Record<string, unknown> = {}): Record<string, 
 
 interface ProbeBody {
   principal: { kind: string; sub: string; scope: string[] } | null;
-  userToken: string | null;
+  sessionToken: string | null;
   userId: string | null;
   identityError: string | null;
 }
 
-const fakeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+const fakeFetch = vi.fn(async (input: string | URL | Request) => {
   const url = String(input);
   if (url === `${CERNERE}/.well-known/cernere-public-key`) {
     return Response.json({ keys: [{ kid: KID, public_key: RAW_PUBLIC_KEY.toString('base64') }] });
-  }
-  if (url === `${CERNERE}/api/auth/me`) {
-    const auth = new Headers(init?.headers).get('authorization');
-    if (auth === `Bearer ${USER_TOKEN}`) return Response.json({ id: 'user-1', name: 'User', role: 'general' });
-    return new Response('unauthorized', { status: 401 });
   }
   return new Response('not found', { status: 404 });
 });
@@ -78,11 +74,20 @@ let stop: (() => void) | null = null;
 
 function start(enabled: boolean): void {
   stop = startAuth({
-    cernereBaseUrl: CERNERE,
+    sessions: {
+      resolve: async token => { if(token!==USER_SESSION) throw new ServiceSessionMissingError(); return { projectKey: "glab", projectToken: "scoped", sessionBinding: "s".repeat(43), expiresAt: new Date(Date.now()+600_000).toISOString(), user: { id: "user-1", role: "general", displayName: "User", email: null } }; },
+      run: async (_token, _operation, resource) => {
+        if (!await resource.authorizeResource({ risk: resource.risk, requestId: 'request' })) throw new Error('denied');
+        return resource.execute();
+      },
+    },
+    delegations: { run: async () => { throw new Error('No delegated credential in machine-principal tests'); } },
+    operationPolicy: c => ({ action: `fixture.${c.req.method.toLowerCase()}`, risk: 'read', maximumBodyBytes: 4096,
+      authorizeResource: (_context, identity) => identity.userId === 'user-1' }),
     adminIds: new Set(),
     db,
     issuer: CERNERE,
-    cookieSecure: false,
+    publicOrigin: 'http://localhost:5185',
     externalService: enabled
       ? {
           modules: new Set(['consult']),
@@ -106,7 +111,7 @@ function makeApp(): Hono {
     }
     return c.json({
       principal: getServicePrincipal(c),
-      userToken: getUserToken(c),
+      sessionToken: getUserSession(c)?.token ?? null,
       userId,
       identityError,
     });
@@ -141,7 +146,7 @@ describe('requireAuth — プラグイン外部経路の Cernere service token',
     expect(res.status).toBe(200);
     const body = await res.json() as ProbeBody;
     expect(body.principal).toEqual({ kind: 'service', sub: 'glab-bot', scope: ['glab-external:write'] });
-    expect(body.userToken).toBeNull();
+    expect(body.sessionToken).toBeNull();
     expect(body.userId).toBeNull();
     // getIdentity (ユーザ前提) は service 主体では例外。
     expect(body.identityError).toMatch(/service principal/);
@@ -206,7 +211,7 @@ describe('requireAuth — プラグイン外部経路の Cernere service token',
       headers: { 'x-glab-service-token': signPaseto(serviceClaims()) },
     });
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'unauthorized' });
+    expect(await res.json()).toEqual({ error: 'service_session_required' });
   });
 
   it('外部経路でも token が無ければ 401', async () => {
@@ -220,12 +225,12 @@ describe('requireAuth — プラグイン外部経路の Cernere service token',
     const app = makeApp();
     for (const path of ['/api/x/consult/external/notifications', '/api/x/consult/list']) {
       const res = await app.request(path, {
-        headers: { authorization: `Bearer ${USER_TOKEN}`, 'x-glab-service-token': signPaseto(serviceClaims()) },
+        headers: { authorization: `Bearer ${USER_SESSION}`, 'x-glab-service-token': signPaseto(serviceClaims()) },
       });
       expect(res.status).toBe(200);
       const body = await res.json() as ProbeBody;
       expect(body.userId).toBe('user-1');
-      expect(body.userToken).toBe(USER_TOKEN);
+      expect(body.sessionToken).toBe(USER_SESSION);
       expect(body.principal).toBeNull();
     }
   });
@@ -239,6 +244,31 @@ describe('requireAuth — プラグイン外部経路の Cernere service token',
       headers: { 'x-glab-service-token': signPaseto(serviceClaims()) },
     });
     expect(res.status).toBe(401);
+  });
+});
+
+describe('explicit credential boundaries', () => {
+  it('does not accept a valid session cookie behind an unsupported Authorization scheme', async () => {
+    start(false);
+    const response = await makeApp().request('/api/x/consult/list', {
+      headers: { authorization: 'Digest unrelated', cookie: `corpus_session=${USER_SESSION}` },
+    });
+    expect(response.status).toBe(401);
+  });
+  it('does not fall back to a valid cookie when a declared delegation fails', async () => {
+    start(false);
+    const response = await makeApp().request('/api/x/consult/list', {
+      headers: { authorization: `Cernere-Delegation ${'d'.repeat(43)}`, cookie: `corpus_session=${USER_SESSION}`,
+        'x-cernere-request-id': '33a39d27-96e9-40a3-bdba-52f1e8a81ae7' },
+    });
+    expect(response.status).toBe(503);
+  });
+  it('rejects malformed delegations before domain routes execute', async () => {
+    start(false);
+    const response = await makeApp().request('/api/x/consult/list', {
+      headers: { authorization: 'Cernere-Delegation invalid', cookie: `corpus_session=${USER_SESSION}` },
+    });
+    expect(response.status).toBe(401);
   });
 });
 
