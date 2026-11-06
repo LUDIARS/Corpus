@@ -6,7 +6,7 @@
   "templateRules": [],
   "membership": [
     {
-      "pathPattern": "(^|/)server/(upload-capture|service-upload-gate)(\\.test)?\\.ts$"
+      "pathPattern": "(^|/)server/(upload-capture|upload-transfer|service-upload-gate)(\\.test)?\\.ts$"
     },
     {
       "pathPattern": "(^|/)server/service-session-(store|cookie|routes)(\\.test)?\\.ts$"

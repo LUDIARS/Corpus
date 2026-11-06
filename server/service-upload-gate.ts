@@ -9,6 +9,7 @@ import { ServiceSessionMissingError } from './service-session-store.ts';
 import type { ClassifiedServiceOperation, ServiceOperationCredential, ServiceOperationGate } from './service-operation-gate.ts';
 import { operationCapturePool, CaptureUnavailableError, type OwnedBodyCapture, type CaptureLimits } from './upload-capture.ts';
 import { OperationBodyError } from './service-operation-body.ts';
+import { openBlobTransfer, type OwnedBlobTransfer } from './upload-transfer.ts';
 
 export interface AuthorizedUploadBody { body: Blob; maximumBytes: number; timeoutSeconds: number }
 /** Backend-only exact captured body; it never contains user/global credentials. */
@@ -18,7 +19,7 @@ export async function runServiceUpload(c: Context, next: Next, gate: ServiceOper
   credential: ServiceOperationCredential, classified: ClassifiedServiceOperation): Promise<Response | void> {
   if (!classified.upload || classified.risk !== 'important' || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(c.req.method)
     || 'delegation' in credential) return c.json({ error: 'upload_operation_unclassified' }, 403);
-  let executing = false, denied = false, capture: OwnedBodyCapture | undefined, replay: Request | undefined;
+  let executing = false, denied = false, capture: OwnedBodyCapture | undefined, replay: Request | undefined, replayBody: OwnedBlobTransfer | undefined;
   const original = c.req.raw;
   try {
     const limits = requireUploadLimits({ ...classified.upload, maximumBytes: Math.min(classified.maximumBodyBytes, classified.upload.maximumBytes) });
@@ -26,12 +27,14 @@ export async function runServiceUpload(c: Context, next: Next, gate: ServiceOper
     const url = new URL(c.req.url), resource = url.pathname + url.search;
     const current = (): boolean => gate.isCurrent() && !original.signal.aborted;
     const dispose = async (): Promise<void> => {
-      try { if (replay?.body && !replay.body.locked) await replay.body.cancel().catch(() => {}); }
+      try { await replayBody?.dispose(); }
       finally { if (capture) await capture.dispose(); }
     };
     const receive = async (captureLimits: CaptureLimits): Promise<OwnedBodyCapture> => {
       capture = await operationCapturePool.capture(original, captureLimits);
-      replay = new Request(original, { body: capture.body, duplex: 'half' } as RequestInit); c.req.raw = replay;
+      const signal = captureLimits.signal ? AbortSignal.any([original.signal, captureLimits.signal]) : original.signal;
+      replayBody = openBlobTransfer(capture.body, signal);
+      replay = new Request(original, { body: replayBody.body, duplex: 'half', signal } as RequestInit); c.req.raw = replay;
       c.set('authorizedUploadBody', { body: capture.body, ...limits });
       return { body: capture.body, dispose };
     };
@@ -70,7 +73,7 @@ export async function runServiceUpload(c: Context, next: Next, gate: ServiceOper
     return c.json({ error: rejected ? 'operation_denied' : 'operation_authority_unavailable' }, rejected ? 403 : 503);
   } finally {
     c.set('authorizedUploadBody', undefined);
-    try { if (replay?.body && !replay.body.locked) await replay.body.cancel().catch(() => {}); }
+    try { await replayBody?.dispose(); }
     finally { if (capture) await capture.dispose(); }
   }
 }

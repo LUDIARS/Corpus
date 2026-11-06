@@ -10,6 +10,8 @@ import { OperationBodyError } from './service-operation-body.ts';
 export interface CaptureLimits { maximumBytes: number; timeoutSeconds: number; byteLength?: number; expiresAt?: string; signal?: AbortSignal }
 export interface OwnedBodyCapture { body: Blob; dispose: () => Promise<void> }
 export class CaptureUnavailableError extends Error { constructor() { super('Private upload capacity is unavailable'); } }
+const MAX_CAPTURE_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_POOL_BYTES = 4 * 1024 * 1024 * 1024;
 
 /** No path/body/limit comes from the browser; hosts declare these per route. */
 export class UploadCapturePool {
@@ -20,18 +22,18 @@ export class UploadCapturePool {
   private readonly memoryLimit: number;
   private readonly temporaryRoot: string;
   constructor(options: { maximumTotalBytes?: number; maximumConcurrent?: number; memoryBytes?: number; temporaryRoot?: string } = {}) {
-    this.totalLimit = options.maximumTotalBytes ?? 512 * 1024 * 1024;
+    this.totalLimit = options.maximumTotalBytes ?? MAX_POOL_BYTES;
     this.concurrentLimit = options.maximumConcurrent ?? 8;
     this.memoryLimit = options.memoryBytes ?? 1024 * 1024;
     this.temporaryRoot = options.temporaryRoot ?? resolve(tmpdir());
-    if (!Number.isSafeInteger(this.totalLimit) || this.totalLimit < 1 || this.totalLimit > 512 * 1024 * 1024
+    if (!Number.isSafeInteger(this.totalLimit) || this.totalLimit < 1 || this.totalLimit > MAX_POOL_BYTES
       || !Number.isSafeInteger(this.concurrentLimit) || this.concurrentLimit < 1 || this.concurrentLimit > 8
       || !Number.isSafeInteger(this.memoryLimit) || this.memoryLimit < 1 || this.memoryLimit > 1024 * 1024
       || !isAbsolute(this.temporaryRoot) || /^[/\\]{2}/.test(this.temporaryRoot)) throw new Error('Invalid private capture pool limits');
   }
   async capture(request: Request, limits: CaptureLimits): Promise<OwnedBodyCapture> {
     const maximum = limits.maximumBytes, timeout = limits.timeoutSeconds, expected = limits.byteLength;
-    if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > 200 * 1024 * 1024 || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > 300
+    if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > MAX_CAPTURE_BYTES || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > 300
       || expected !== undefined && (!Number.isSafeInteger(expected) || expected < 1 || expected > maximum)) throw new Error('A bounded upload route is required');
     const declared = request.headers.get('content-length');
     if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > maximum || expected !== undefined && Number(declared) !== expected)) throw new OperationBodyError(413);

@@ -21,10 +21,12 @@ describe('downstream operation capabilities', () => {
     expect(result).not.toBeNull(); expect(delegate).not.toHaveBeenCalled();
     expect(delegateUpload).toHaveBeenCalledWith(session.token, { projectKey: target.projectKey, audience: target.baseUrl },
       expect.objectContaining({ body, method: 'PUT', path: '/api/media' }), expect.any(AbortSignal));
-    expect(result!.init.body).toBe(body);
+    expect(new Uint8Array(await new Response(result!.init.body as ReadableStream<Uint8Array>).arrayBuffer()))
+      .toEqual(new Uint8Array(await body.arrayBuffer()));
+    expect(new Headers(result!.init.headers).get('content-length')).toBe(String(body.size));
     expect(new Headers(result!.init.headers).get('authorization')).toBe(`Cernere-Upload ${'u'.repeat(43)}`);
     expect(new Headers(result!.init.headers).has('cookie')).toBe(false);
-    expect(result!.init.signal!.aborted).toBe(false); result!.dispose!(); expect(result!.init.signal!.aborted).toBe(true);
+    expect(result!.init.signal!.aborted).toBe(false); await result!.dispose!(); expect(result!.init.signal!.aborted).toBe(true);
   });
   it('never substitutes another body or the ordinary delegate when upload support is absent', async () => {
     const { provider, delegate } = fixture(); const body = new Blob(['fixed']);
@@ -32,6 +34,13 @@ describe('downstream operation capabilities', () => {
     expect(await provider.authorize(session, target, { path: '/api/media', action: 'media.write', upload, init: { method: 'PUT', body: new Blob(['fixed']) } })).toBeNull();
     expect(await provider.authorize(session, target, { path: '/api/media', action: 'media.write', upload, init: { method: 'PUT', body } })).toBeNull();
     expect(delegate).not.toHaveBeenCalled();
+  });
+  it('keeps the prepared connector path after an asynchronous caller mutation', async () => {
+    const operation = { path: '/records', action: 'records.read' };
+    const { provider, delegate } = fixture();
+    delegate.mockImplementationOnce(async () => { operation.path = '/other-records'; return credential(); });
+    const result = await provider.authorize(session, target, operation);
+    expect(result!.path).toBe('/records'); expect(delegate.mock.calls[0]![2].path).toBe('/records');
   });
   it('forwards only a destination capability and the exact prepared request', async () => {
     const { provider, delegate } = fixture();

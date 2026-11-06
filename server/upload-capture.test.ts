@@ -19,6 +19,17 @@ afterEach(async () => {
 });
 
 describe('private exact-byte upload capture', () => {
+  it('reserves an exact2GiB arrival using safe-number quota accounting without materializing its body', async () => {
+    const maximum = 2 ** 31, { pool, root } = await fixture({ maximumTotalBytes: maximum + 1 });
+    const controller = new AbortController(), stream = new ReadableStream<Uint8Array>();
+    const incoming = new Request('https://hub.example/media', { method: 'PUT', body: stream, signal: controller.signal, duplex: 'half' } as RequestInit);
+    const pending = pool.capture(incoming, { maximumBytes: maximum, byteLength: maximum, timeoutSeconds: 300 });
+    await expect(pool.capture(request('12'), { ...limits, byteLength: 2 })).rejects.toBeInstanceOf(CaptureUnavailableError);
+    controller.abort(); await expect(pending).rejects.toThrow(); expect(await readdir(root)).toEqual([]);
+    const next = await pool.capture(request('ok'), limits); captures.push(next);
+    await expect(pool.capture(request('x'), { maximumBytes: maximum + 1, timeoutSeconds: 300 })).rejects.toThrow();
+    expect(() => new UploadCapturePool({ maximumTotalBytes: 4 * 1024 ** 3 + 1 })).toThrow();
+  });
   it('spills to its private directory, preserves binary bytes and releases an idempotent lease', async () => {
     const { root, pool } = await fixture({ memoryBytes: 2, maximumConcurrent: 1 });
     const bytes = new Uint8Array([0, 255, 10, 13, 128]);

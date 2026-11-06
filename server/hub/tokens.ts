@@ -7,10 +7,11 @@ import type { ServiceSessionStore } from '../service-session-store.ts';
 import type { DelegatedHttpOperation } from '../../lib/cernere/packages/composite/src/delegation.js';
 import { requireUploadLimits } from '../../lib/cernere/packages/composite/src/upload-body.js';
 import type { AuthorizedUploadBody } from '../service-upload-gate.ts';
+import { openBlobTransfer } from '../upload-transfer.ts';
 
 export interface DownstreamTarget { service: string; projectKey: string; baseUrl: string }
 export interface DownstreamRequest { path: string; action: string; init?: RequestInit; additionalHeaders?: readonly string[]; upload?: AuthorizedUploadBody }
-export interface AuthorizedDownstreamRequest { path: string; init: RequestInit; dispose?: () => void }
+export interface AuthorizedDownstreamRequest { path: string; init: RequestInit; dispose?: () => Promise<void> }
 type DelegationSessions = Pick<ServiceSessionStore, 'delegate'> & Partial<Pick<ServiceSessionStore, 'delegateUpload'>>;
 export interface TokenProvider {
   readonly mode: string;
@@ -33,8 +34,9 @@ export class CernereDelegationTokenProvider implements TokenProvider {
       if (base.username || base.password || base.search || base.hash || !(base.protocol === 'https:'
         || (base.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)))) throw new Error('Invalid downstream URL');
       const prefix = base.pathname.replace(/\/+$/, '');
-      if (!operation.path.startsWith('/')) throw new Error('Absolute service-relative path required');
-      const path = prefix + operation.path;
+      const connectorPath = operation.path;
+      if (!connectorPath.startsWith('/')) throw new Error('Absolute service-relative path required');
+      const path = prefix + connectorPath;
       const url = new URL(path, base.origin);
       if (url.origin !== base.origin || url.pathname + url.search !== path || url.hash) throw new Error('Noncanonical downstream request');
       const headers = new Headers(operation.init?.headers);
@@ -44,8 +46,9 @@ export class CernereDelegationTokenProvider implements TokenProvider {
       if (!headers.has('accept-language')) headers.set('accept-language', '*');
       const upload = operation.upload;
       if (upload && operation.init?.body !== upload.body) throw new Error('The exact authorized upload Blob is required');
+      if (upload) headers.set('content-length', String(upload.body.size));
       // Upload capture is already serialized; do not create/read a second body
-      // stream or materialize 200 MiB through Request.arrayBuffer().
+      // stream or materialize 2 GiB through Request.arrayBuffer().
       const prepared = new Request(url, { ...operation.init, ...(upload ? { body: undefined } : {}), headers, credentials: 'omit', redirect: 'error' });
       if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(prepared.method)) throw new Error('Unclassified HTTP method');
       // Platform Request serializes FormData once, including the boundary. Forward
@@ -54,19 +57,21 @@ export class CernereDelegationTokenProvider implements TokenProvider {
       prepared.signal.throwIfAborted();
       const request = { action: operation.action, method: prepared.method as DelegatedHttpOperation['method'],
         path, resource: path, body, headers: prepared.headers, additionalHeaders: operation.additionalHeaders };
-      let credential: { token: string; requestId: string }, lifetime = 15_000, dispose: (() => void) | undefined;
+      let credential: { token: string; requestId: string };
       if (upload) {
         const limits = requireUploadLimits(upload);
         if (!this.sessions.delegateUpload || ['GET', 'HEAD'].includes(prepared.method) || !(body instanceof Blob) || body.size > limits.maximumBytes) throw new Error('Bounded upload delegation is unavailable');
         const issued = await this.sessions.delegateUpload(session.token, { projectKey: target.projectKey, audience: base.origin }, { ...request, body }, prepared.signal);
         credential = { token: issued.arrivalToken, requestId: issued.requestId };
-        lifetime = limits.timeoutSeconds * 1000;
-        const transfer = new AbortController(); dispose = () => transfer.abort();
+        const transfer = new AbortController();
         const forwarding = new Headers(prepared.headers);
         forwarding.set('authorization', `Cernere-Upload ${credential.token}`); forwarding.set('x-cernere-request-id', credential.requestId);
         prepared.signal.throwIfAborted();
-        return { path: operation.path, dispose, init: { ...operation.init, method: prepared.method, headers: forwarding, credentials: 'omit', redirect: 'error', body,
-          signal: AbortSignal.any([prepared.signal, transfer.signal, AbortSignal.timeout(lifetime)]) } };
+        const signal = AbortSignal.any([prepared.signal, transfer.signal, AbortSignal.timeout(limits.timeoutSeconds * 1000)]);
+        const outgoing = openBlobTransfer(body, signal);
+        return { path: connectorPath, dispose: async () => { transfer.abort(); await outgoing.dispose(); },
+          init: { ...operation.init, method: prepared.method, headers: forwarding, credentials: 'omit', redirect: 'error',
+            body: outgoing.body, duplex: 'half', signal } as RequestInit };
       }
       const issued = await this.sessions.delegate(session.token, { projectKey: target.projectKey, audience: base.origin }, { ...request, body: body as Uint8Array });
       credential = { token: issued.delegationToken, requestId: issued.requestId };
@@ -74,7 +79,7 @@ export class CernereDelegationTokenProvider implements TokenProvider {
       const forwarding = new Headers(prepared.headers);
       forwarding.set('authorization', `Cernere-Delegation ${credential.token}`);
       forwarding.set('x-cernere-request-id', credential.requestId);
-      return { path: operation.path, init: { ...operation.init, method: prepared.method, headers: forwarding,
+      return { path: connectorPath, init: { ...operation.init, method: prepared.method, headers: forwarding,
         credentials: 'omit', redirect: 'error', body: ['GET', 'HEAD'].includes(prepared.method) ? undefined : body,
         signal: AbortSignal.any([prepared.signal, AbortSignal.timeout(15_000)]) } };
     } catch {

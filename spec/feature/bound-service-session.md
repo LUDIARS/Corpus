@@ -43,7 +43,7 @@ their separate principal and scope checks; they do not become user sessions unde
 
 Implementation remains incomplete until host operation classifications and resource ACLs, downstream
 consumer contracts and all consumers are migrated. The current submodule pin references
-accepted Cr main 801756d1e354c486cbe0321acdc48909eed8afee (Revisor PR3627 and3629, registered checks passed).
+accepted Cr main71d6c368dc188bbb95f9af323d347060425d99d6 (Revisor PR3627/3629/3634, registered checks passed).
 This is source integration, not deployment or end-to-end cutover evidence.
 Do not deploy this partial migration or deploy the breaking Cr contract before every consumer is ready.
 
@@ -70,10 +70,15 @@ belongs to Revisor; no launch, restart, local PR or deployment has occurred for 
 
 ## Explicit bounded upload capture
 
+The2GiB capture/quota correction now pins accepted Cr PR3634. The prior200MiB
+spectator-policy reference was incorrect for GLAB profile videos, whose actual
+MEDIA_RULES allow2GiB. This source integration does not claim2GiB runtime success;
+GLAB/real target adoption and coordinated administrator settings remain required.
+
 Only a host-classified important mutation with an explicit `upload` policy can exceed the ordinary body
-ceiling. Route limits cap bytes at200MiB and capture time at300seconds. Standard Node streams and a private
+ceiling. Route limits cap bytes at2GiB and capture time at300seconds. Standard Node streams and a private
 temporary spool preserve exact binary bytes; captures above1MiB spill to a private exclusive file. The
-process permits at most8 retained captures and512MiB total reserved/received bytes. The expected size is
+process permits at most8 retained captures and4GiB total reserved/received bytes. The expected size is
 reserved before an incoming delegated body is read, and actual bytes are checked independently of the
 Content-Length hint. Capacity exhaustion fails closed. Disconnect, elapsed deadline, over/under-size or
 read failure cancels the reader, unlinks only that capture's file and removes only its empty directory.
@@ -84,7 +89,11 @@ The source's own captured operation uses the shared SDK's exact Blob digest and 
 latest host ACL. Only that same backend-owned Blob is available to the downstream provider. The provider
 hashes it through the reviewed SDK and issues a `Cernere-Upload` arrival credential, never a global token
 or an ordinary small-body delegation fallback. Transfer cancellation must finish before capture disposal;
-upload callers consume a bounded small result before releasing their outgoing transfer. Large download
+upload callers consume a bounded small result and await asynchronous transfer disposal before releasing
+their capture. An owned stream holds the Blob reader, cancels it on abort and waits for outstanding pulls
+and cancellation before releasing its lock. This remains possible when an HTTP consumer holds the output
+stream lock. Replay requests use the same managed-reader ownership and the reserved deadline signal;
+checking only an unlocked Request body or firing AbortController is not teardown completion. Large download
 and Range responses keep the ordinary streaming path.
 
 An incoming upload explicitly reserves Cr authority before private body capture. The SDK checks the
